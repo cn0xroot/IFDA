@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ifda"
+version = "0.1.0"
+description = "Automated IoT firmware binary analysis — reverse engineering & vulnerability discovery core"
+requires-python = ">=3.10"
+dependencies = [
+    "capstone>=4.0",
+    "pyelftools>=0.29",
+]
+
+[project.optional-dependencies]
+# Heavier engines wrapped opportunistically; the core degrades gracefully without them.
+taint = ["angr>=9.2"]
+
+[project.scripts]
+ifda = "ifda.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ifda*"]

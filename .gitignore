@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Go service build artifact
+service/ifda-service
+service/fwana-service
+
+# Service runtime data (triage state, uploads)
+service/data/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Harness / local tooling
+.claude/
+claude.sh

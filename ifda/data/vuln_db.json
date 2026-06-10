@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "description": "Offline known-vulnerability DB for component/version correlation (FR-VUL-1). Updatable independently of releases (NFR-USE-2).",
+    "schema": "component -> [ {cve, severity, summary, version_lt? , versions?[] } ]"
+  },
+  "busybox": [
+    {"cve": "CVE-2018-1000517", "severity": "high", "summary": "BusyBox wget heap buffer overflow", "version_lt": "1.29.0"},
+    {"cve": "CVE-2021-42374", "severity": "medium", "summary": "BusyBox unlzma out-of-bounds read", "version_lt": "1.34.0"}
+  ],
+  "dropbear": [
+    {"cve": "CVE-2016-7406", "severity": "high", "summary": "Dropbear format string in dropbearconvert", "version_lt": "2016.74"},
+    {"cve": "CVE-2018-15599", "severity": "medium", "summary": "Dropbear/recv_msg_userauth username enumeration", "version_lt": "2018.76"}
+  ],
+  "openssl": [
+    {"cve": "CVE-2014-0160", "severity": "critical", "summary": "Heartbleed: TLS heartbeat OOB read", "versions": ["1.0.1", "1.0.1a", "1.0.1b", "1.0.1c", "1.0.1d", "1.0.1e", "1.0.1f"]},
+    {"cve": "CVE-2016-2107", "severity": "high", "summary": "OpenSSL AES-NI CBC padding oracle", "version_lt": "1.0.2h"}
+  ],
+  "uclibc": [
+    {"cve": "CVE-2022-30295", "severity": "medium", "summary": "uClibc/uClibc-ng predictable DNS transaction IDs", "version_lt": "1.0.41"}
+  ],
+  "lighttpd": [
+    {"cve": "CVE-2019-11072", "severity": "high", "summary": "lighttpd mod_userdir buffer issue", "version_lt": "1.4.54"}
+  ]
+}

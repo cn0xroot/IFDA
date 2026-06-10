@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IFDA — IoT Firmware Deep Analysis</title>
+<script>
+  // Apply the saved theme before first paint to avoid a flash of the default.
+  document.documentElement.setAttribute(
+    "data-theme", localStorage.getItem("ifda-theme") || "midnight");
+</script>
+<style>
+  /* Themes ported from cn0xroot/AI_Web_Search (Genspark-style). Severity hues are
+     shared; per-theme blocks override the surface/accent palette + --code. */
+  :root { --crit:#ef4444; --high:#f97316; --med:#eab308; --low:#22c55e; --info:#38bdf8;
+          --ok:#22c55e; --bad:#ef4444; --warn:#eab308; }
+  :root, [data-theme="midnight"] {
+    --bg:#07080f; --surface:#0d1117; --panel:#111827; --panel2:#161f2e;
+    --line:#1e2a3a; --line2:#243044; --fg:#f1f5f9; --muted:#64748b; --soft:#94a3b8;
+    --accent:#6366f1; --accent-h:#818cf8; --accent2:#a78bfa; --code:#0b0f15; }
+  [data-theme="ocean"] {
+    --bg:#060d14; --surface:#0a1622; --panel:#0f1f30; --panel2:#16293d;
+    --line:#1c3147; --line2:#244056; --fg:#e6f1f7; --muted:#5b7488; --soft:#93b4c8;
+    --accent:#0ea5e9; --accent-h:#38bdf8; --accent2:#22d3ee; --code:#06101a; }
+  [data-theme="forest"] {
+    --bg:#060f0a; --surface:#0b1810; --panel:#102217; --panel2:#16301f;
+    --line:#1d3a28; --line2:#265034; --fg:#ecf6ef; --muted:#5f7d68; --soft:#9bbfa3;
+    --accent:#22c55e; --accent-h:#4ade80; --accent2:#84cc16; --code:#08130d; }
+  [data-theme="dusk"] {
+    --bg:#0f0a16; --surface:#160f20; --panel:#1d142b; --panel2:#271a39;
+    --line:#322247; --line2:#412e5c; --fg:#f2ecf7; --muted:#76688a; --soft:#b3a5c8;
+    --accent:#a855f7; --accent-h:#c084fc; --accent2:#f59e0b; --code:#0c0814; }
+  [data-theme="rose"] {
+    --bg:#14070d; --surface:#1d0c14; --panel:#27121c; --panel2:#341925;
+    --line:#42232f; --line2:#552e3e; --fg:#f7eef1; --muted:#8a6670; --soft:#c8a3ad;
+    --accent:#f43f5e; --accent-h:#fb7185; --accent2:#fb923c; --code:#11060b; }
+  [data-theme="nord"] {
+    --bg:#2e3440; --surface:#333b48; --panel:#3b4252; --panel2:#434c5e;
+    --line:#4c566a; --line2:#5a657c; --fg:#eceff4; --muted:#7b88a1; --soft:#d8dee9;
+    --accent:#88c0d0; --accent-h:#8fbcbb; --accent2:#81a1c1; --code:#272c36; }
+  [data-theme="light"] {
+    --bg:#f8fafc; --surface:#ffffff; --panel:#ffffff; --panel2:#f1f5f9;
+    --line:#e2e8f0; --line2:#cbd5e1; --fg:#0f172a; --muted:#64748b; --soft:#475569;
+    --accent:#6366f1; --accent-h:#4f46e5; --accent2:#a855f7; --code:#f1f5f9; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  a { color:var(--accent); text-decoration:none; }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex;
+           align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; font-weight:700; letter-spacing:.02em;
+              background:linear-gradient(90deg,var(--accent),var(--accent2));
+              -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  header .tag { color:var(--muted); font-size:12px; }
+  header .spacer { flex:1; }
+  select.themesel { width:auto; padding:5px 8px; font-size:12px; cursor:pointer; }
+  main { display:grid; grid-template-columns:380px 1fr; height:calc(100vh - 50px); }
+  .left { border-right:1px solid var(--line); overflow-y:auto; padding:14px; }
+  .right { overflow-y:auto; padding:18px 22px; }
+
+  input, select, button { font:inherit; }
+  input[type=text], select { background:var(--panel); border:1px solid var(--line);
+        color:var(--fg); padding:7px 9px; border-radius:6px; font-size:13px; width:100%; }
+  .submit { display:flex; gap:6px; margin-bottom:8px; }
+  .submit input { flex:1; }
+  button { background:var(--accent); border:0; color:#fff; padding:7px 13px; border-radius:6px;
+           cursor:pointer; font-size:13px; font-weight:600; white-space:nowrap; }
+  button:hover { background:var(--accent-h); }
+  button.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--fg); }
+  button.ghost:hover { border-color:var(--accent); }
+  button.sm { padding:3px 8px; font-size:11px; }
+  .uprow { display:flex; gap:6px; align-items:center; margin-bottom:14px; font-size:12px;
+           color:var(--muted); }
+  .uprow label { cursor:pointer; color:var(--accent); }
+  .uprow input[type=file] { display:none; }
+
+  .job { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+         padding:9px 11px; margin-bottom:7px; cursor:pointer; }
+  .job.sel { border-color:var(--accent); background:var(--panel2); }
+  .job .row1 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .job .target { font-family:ui-monospace,Menlo,monospace; font-size:12px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge { font-size:10px; padding:1px 7px; border-radius:10px; text-transform:uppercase;
+           letter-spacing:.04em; font-weight:700; }
+  .badge.queued{background:var(--line2);color:var(--soft)} .badge.running{background:var(--accent);color:#fff}
+  .badge.completed{background:#16a34a;color:#fff} .badge.failed{background:var(--bad);color:#fff}
+  .bar { height:5px; background:var(--line2); border-radius:4px; margin-top:7px; overflow:hidden; }
+  .bar > span { display:block; height:100%; background:var(--accent); transition:width .3s; }
+  .meta { color:var(--muted); font-size:11px; margin-top:5px; display:flex; gap:9px; flex-wrap:wrap; }
+
+  .sev-crit{color:var(--crit)} .sev-high{color:var(--high)} .sev-med{color:var(--med)}
+  .sev-low{color:var(--low)} .sev-info{color:var(--info)}
+  .bg-crit{background:var(--crit)} .bg-high{background:var(--high)} .bg-med{background:var(--med)}
+  .bg-low{background:var(--low)} .bg-info{background:var(--info)}
+
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:16px; }
+  .tabs button { background:none; color:var(--muted); border:0; border-bottom:2px solid transparent;
+        border-radius:0; padding:8px 14px; font-weight:600; }
+  .tabs button.active { color:var(--fg); border-bottom-color:var(--accent); }
+  .tabs .spacer { flex:1; }
+  .tabs .exp { display:flex; gap:6px; align-items:center; }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;
+           margin-bottom:18px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card .n { font-size:26px; font-weight:700; line-height:1.1; }
+  .card .l { color:var(--muted); font-size:12px; margin-top:2px; }
+
+  .distro { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+            padding:14px 16px; margin-bottom:18px; }
+  .distro h3, .table-wrap h3 { margin:0 0 10px; font-size:13px; color:var(--muted);
+            text-transform:uppercase; letter-spacing:.05em; }
+  .drow { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .drow .k { width:74px; font-size:12px; text-transform:capitalize; }
+  .drow .t { flex:1; height:16px; background:var(--line2); border-radius:4px; overflow:hidden; }
+  .drow .t > span { display:block; height:100%; border-radius:4px; }
+  .drow .v { width:34px; text-align:right; font-variant-numeric:tabular-nums; font-size:12px; }
+
+  .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;
+             background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .filters .sevtog { display:flex; gap:4px; }
+  .filters .sevtog button { padding:3px 9px; font-size:11px; border-radius:12px;
+        background:var(--panel2); border:1px solid var(--line); color:var(--muted); font-weight:700; }
+  .filters .sevtog button.on { color:#fff; }
+  .filters select { width:auto; min-width:120px; }
+  .filters input[type=text] { width:180px; }
+  .filters .rng { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+  .filters .count { margin-left:auto; color:var(--muted); font-size:12px; }
+
+  .finding { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--line);
+        border-radius:7px; margin-bottom:9px; }
+  .finding.crit{border-left-color:var(--crit)} .finding.high{border-left-color:var(--high)}
+  .finding.med{border-left-color:var(--med)} .finding.low{border-left-color:var(--low)}
+  .finding.info{border-left-color:var(--info)}
+  .finding .hd { display:flex; align-items:center; gap:10px; padding:10px 13px; cursor:pointer; }
+  .finding .hd .t { font-weight:600; flex:1; }
+  .finding .hd .sevtag { font-size:10px; font-weight:700; text-transform:uppercase; padding:1px 7px;
+        border-radius:4px; color:#0d1117; }
+  .finding .body { padding:0 13px 12px; border-top:1px solid var(--line); }
+  .finding .sub { color:var(--muted); font-size:12px; margin:8px 0; }
+  .finding .desc { font-size:13px; margin:8px 0; }
+  .ev { background:var(--code); border:1px solid var(--line); border-radius:5px; padding:7px 9px;
+        font-family:ui-monospace,Menlo,monospace; font-size:12px; margin-top:6px;
+        white-space:pre-wrap; word-break:break-word; }
+  .ev .loc { color:var(--muted); }
+  .taint { color:var(--high); }
+  pre.code { background:var(--code); border:1px solid var(--line); border-radius:5px; padding:9px 11px;
+        font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow-x:auto; margin:6px 0 0; }
+  .tristrip { display:flex; gap:6px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .tristrip .lab { color:var(--muted); font-size:12px; }
+  .tristrip .cur { font-size:11px; font-weight:700; padding:1px 8px; border-radius:10px;
+        border:1px solid var(--line); }
+  .tristrip .cur.confirmed{color:var(--high);border-color:var(--high)}
+  .tristrip .cur.false_positive{color:var(--muted)}
+  .tristrip .cur.accepted_risk{color:var(--med);border-color:var(--med)}
+
+  table.bins { width:100%; border-collapse:collapse; font-size:13px; }
+  table.bins th, table.bins td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  table.bins th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  table.bins td.path { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .chip { display:inline-block; font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px;
+          margin:1px 2px; }
+  .chip.ok{background:rgba(34,197,94,.15);color:var(--ok)}
+  .chip.bad{background:rgba(239,68,68,.15);color:var(--bad)}
+  .chip.warn{background:rgba(234,179,8,.15);color:var(--warn)}
+
+  .empty { color:var(--muted); text-align:center; margin-top:64px; }
+</style>
+</head>
+<body x-data="app()" x-init="init()">
+<header>
+  <h1>IFDA</h1>
+  <span class="tag">IoT Firmware Deep Analysis</span>
+  <span class="spacer"></span>
+  <span class="tag" x-show="report" x-text="(report?.binaries?.length||0)+' binaries · '+(findings.length)+' findings'"></span>
+  <select class="themesel" x-model="theme" @change="applyTheme()" title="Theme / 主题">
+    <option value="midnight">🌙 暗夜 Midnight</option>
+    <option value="ocean">🌊 海洋 Ocean</option>
+    <option value="forest">🌲 森林 Forest</option>
+    <option value="dusk">🌆 暮色 Dusk</option>
+    <option value="rose">🌹 玫瑰 Rose</option>
+    <option value="nord">❄️ Nord</option>
+    <option value="light">☀️ 浅色 Light</option>
+  </select>
+</header>
+
+<main>
+  <!-- LEFT: submit + job list -->
+  <div class="left">
+    <div class="submit">
+      <input type="text" x-model="target" placeholder="/path/to/binary or extracted rootfs"
+             @keydown.enter="submit()">
+      <button @click="submit()">Analyze</button>
+    </div>
+    <div class="uprow">
+      <label>
+        <span x-text="uploading ? 'Uploading…' : '⬆ Upload a file'"></span>
+        <input type="file" @change="upload($event)">
+      </label>
+      <span>— stored server-side, then analyzed</span>
+    </div>
+
+    <template x-if="!jobs.length">
+      <div class="empty">No jobs yet.</div>
+    </template>
+    <template x-for="j in jobs" :key="j.id">
+      <div class="job" :class="{sel: j.id===selectedId}" @click="select(j.id)">
+        <div class="row1">
+          <span class="target" :title="j.target" x-text="j.target"></span>
+          <span class="badge" :class="j.status" x-text="j.status"></span>
+        </div>
+        <div class="bar"><span :style="`width:${j.progress}%`"></span></div>
+        <div class="meta">
+          <span x-text="(j.stage||'—')+' '+j.progress+'%'"></span>
+          <span x-show="j.detail" x-text="j.detail"></span>
+          <span x-show="j.status==='completed'" x-text="j.findings+' findings · '+j.high_crit+' high/crit'+(j.cache_hit?' · cached':'')"></span>
+          <span x-show="j.status==='failed'" class="sev-crit" x-text="j.error||'failed'"></span>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- RIGHT: report views -->
+  <div class="right">
+    <template x-if="!selJob">
+      <div class="empty">Submit or select a job to see results.</div>
+    </template>
+
+    <template x-if="selJob && selJob.status!=='completed'">
+      <div>
+        <h2 x-text="selJob.target"></h2>
+        <p>Status: <span class="badge" :class="selJob.status" x-text="selJob.status"></span></p>
+        <div class="bar" style="max-width:420px"><span :style="`width:${selJob.progress}%`"></span></div>
+        <p class="meta"><span x-text="(selJob.stage||'')+' — '+(selJob.detail||'')+' ('+selJob.progress+'%)'"></span></p>
+        <p x-show="selJob.status==='failed'" class="sev-crit" x-text="selJob.error"></p>
+      </div>
+    </template>
+
+    <template x-if="selJob && selJob.status==='completed' && report">
+      <div>
+        <div class="tabs">
+          <button :class="{active:tab==='dashboard'}" @click="tab='dashboard'">Dashboard</button>
+          <button :class="{active:tab==='findings'}" @click="tab='findings'"
+                  x-text="`Findings (${findings.length})`"></button>
+          <button :class="{active:tab==='binaries'}" @click="tab='binaries'"
+                  x-text="`Binaries (${binaries.length})`"></button>
+          <span class="spacer"></span>
+          <div class="exp">
+            <a :href="exportURL('json')"><button class="ghost sm">JSON</button></a>
+            <a :href="exportURL('md')"><button class="ghost sm">Markdown</button></a>
+            <a :href="exportURL('sbom')"><button class="ghost sm">SBOM</button></a>
+          </div>
+        </div>
+
+        <!-- DASHBOARD -->
+        <div x-show="tab==='dashboard'">
+          <div class="cards">
+            <div class="card"><div class="n" x-text="findings.length"></div><div class="l">Findings</div></div>
+            <div class="card"><div class="n sev-crit" x-text="sevCount('critical')"></div><div class="l">Critical</div></div>
+            <div class="card"><div class="n sev-high" x-text="sevCount('high')"></div><div class="l">High</div></div>
+            <div class="card"><div class="n" x-text="binaries.length"></div><div class="l">Binaries</div></div>
+            <div class="card"><div class="n" x-text="cveCount"></div><div class="l">CVEs</div></div>
+          </div>
+          <div class="distro">
+            <h3>By severity</h3>
+            <template x-for="s in SEVS" :key="s">
+              <div class="drow" x-show="sevCount(s)>0">
+                <div class="k" :class="'sev-'+SHORT[s]" x-text="s"></div>
+                <div class="t"><span :class="'bg-'+SHORT[s]" :style="`width:${pct(sevCount(s))}%`"></span></div>
+                <div class="v" x-text="sevCount(s)"></div>
+              </div>
+            </template>
+          </div>
+          <div class="distro">
+            <h3>By vulnerability class</h3>
+            <template x-for="vc in classCounts" :key="vc.k">
+              <div class="drow">
+                <div class="k" style="width:160px" x-text="vc.k"></div>
+                <div class="t"><span class="bg-info" :style="`width:${pct(vc.n)}%`"></span></div>
+                <div class="v" x-text="vc.n"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- FINDINGS -->
+        <div x-show="tab==='findings'">
+          <div class="filters">
+            <div class="sevtog">
+              <template x-for="s in SEVS" :key="s">
+                <button :class="{on:f.sev[s]}" :style="f.sev[s]?`background:var(--${SHORT[s]});border-color:var(--${SHORT[s]})`:''"
+                        @click="f.sev[s]=!f.sev[s]" x-text="s[0].toUpperCase()" :title="s"></button>
+              </template>
+            </div>
+            <select x-model="f.vclass">
+              <option value="">All classes</option>
+              <template x-for="c in vclasses" :key="c"><option :value="c" x-text="c"></option></template>
+            </select>
+            <select x-model="f.triage">
+              <option value="">Any triage</option>
+              <option value="new">new</option>
+              <option value="confirmed">confirmed</option>
+              <option value="false_positive">false positive</option>
+              <option value="accepted_risk">accepted risk</option>
+            </select>
+            <input type="text" x-model="f.q" placeholder="search title/snippet/function…">
+            <label class="rng">conf ≥
+              <input type="range" min="0" max="1" step="0.05" x-model.number="f.minConf" style="width:90px">
+              <span x-text="f.minConf"></span>
+            </label>
+            <select x-model="sort">
+              <option value="severity">sort: severity</option>
+              <option value="confidence">sort: confidence</option>
+            </select>
+            <span class="count" x-text="filtered.length+' / '+findings.length"></span>
+          </div>
+
+          <template x-if="!filtered.length"><div class="empty">No findings match the filters.</div></template>
+          <template x-for="f in filtered" :key="f.id">
+            <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
+              <div class="hd" @click="open=!open">
+                <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="f.severity"></span>
+                <span class="t" x-text="f.title"></span>
+                <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
+                <span x-show="(f.triage&&f.triage!=='new')" class="cur" :class="f.triage" x-text="f.triage"></span>
+                <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0" x-text="f.cve_ids.join(', ')"></span>
+                <span x-text="open?'▾':'▸'"></span>
+              </div>
+              <div class="body" x-show="open">
+                <div class="sub" x-text="'component: '+f.component+'  ·  rule: '+f.rule+'  ·  id: '+f.id"></div>
+                <div class="desc" x-text="f.description"></div>
+                <template x-for="(e,i) in (f.evidence||[])" :key="i">
+                  <div class="ev"><span class="loc" x-text="[e.binary,e.function,e.address].filter(Boolean).join(' : ')"></span><br>
+                    <span x-text="e.snippet"></span>
+                    <template x-if="e.taint_path && e.taint_path.length">
+                      <div class="taint" x-text="'↳ '+e.taint_path.join(' → ')"></div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="f.pseudocode">
+                  <details>
+                    <summary style="cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px">Decompiled pseudocode (Ghidra)</summary>
+                    <pre class="code" x-text="f.pseudocode"></pre>
+                  </details>
+                </template>
+                <div class="sub" x-show="f.remediation" x-text="'▸ '+f.remediation"></div>
+                <div class="tristrip">
+                  <span class="lab">Triage:</span>
+                  <button class="ghost sm" @click="setTriage(f,'confirmed')">Confirm</button>
+                  <button class="ghost sm" @click="setTriage(f,'false_positive')">False positive</button>
+                  <button class="ghost sm" @click="setTriage(f,'accepted_risk')">Accept risk</button>
+                  <button class="ghost sm" @click="setTriage(f,'new')">Reset</button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- BINARIES -->
+        <div x-show="tab==='binaries'">
+          <div class="table-wrap">
+            <table class="bins">
+              <thead><tr><th>Binary</th><th>Arch</th><th>libc</th><th>Mitigations</th><th>Fns</th><th>CVEs</th></tr></thead>
+              <tbody>
+                <template x-for="b in binaries" :key="b.path">
+                  <tr>
+                    <td class="path" :title="b.path" x-text="shortPath(b.path)"></td>
+                    <td x-text="(b.arch||'?')+' '+(b.bits||'')+' '+(b.endian||'')+(b.is_library?' (lib)':'')"></td>
+                    <td x-text="b.libc||'—'"></td>
+                    <td x-html="mitChips(b.mitigations)"></td>
+                    <td x-text="(b.functions&&b.functions.length)||0"></td>
+                    <td x-text="cvesFor(b.path)||'—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</main>
+
+<script src="/vendor/alpine.min.js" defer></script>
+<script>
+const SEVS = ["critical","high","medium","low","info"];
+const SHORT = {critical:"crit",high:"high",medium:"med",low:"low",info:"info"};
+function app() {
+  return {
+    SEVS, SHORT,
+    theme: localStorage.getItem("ifda-theme") || "midnight",
+    jobs: [], selectedId: null, report: null, tab: "dashboard",
+    target: "/bin/ls", uploading: false, sse: null,
+    f: { sev:{critical:true,high:true,medium:true,low:true,info:true},
+         vclass:"", triage:"", q:"", minConf:0 },
+    sort: "severity",
+
+    async init() {
+      this.applyTheme();
+      await this.refreshJobs();
+      setInterval(() => { if (!this.sse) this.refreshJobs(); }, 3000);
+    },
+    applyTheme() {
+      document.documentElement.setAttribute("data-theme", this.theme);
+      localStorage.setItem("ifda-theme", this.theme);
+    },
+    async refreshJobs() {
+      try { this.jobs = await (await fetch("/api/jobs")).json(); } catch(e){}
+    },
+    async submit() {
+      const t = (this.target||"").trim(); if (!t) return;
+      const r = await fetch("/api/jobs", {method:"POST",
+        headers:{"Content-Type":"application/json"}, body:JSON.stringify({target:t})});
+      const j = await r.json();
+      if (!r.ok) { alert(j.error||"submit failed"); return; }
+      await this.refreshJobs(); this.select(j.id);
+    },
+    async upload(ev) {
+      const file = ev.target.files[0]; if (!file) return;
+      this.uploading = true;
+      try {
+        const fd = new FormData(); fd.append("file", file);
+        const r = await fetch("/api/upload", {method:"POST", body:fd});
+        const j = await r.json();
+        if (!r.ok) { alert(j.error||"upload failed"); return; }
+        this.target = j.target; await this.submit();
+      } finally { this.uploading = false; ev.target.value = ""; }
+    },
+    select(id) {
+      this.selectedId = id; this.report = null; this.tab = "dashboard";
+      if (this.sse) { this.sse.close(); this.sse = null; }
+      const job = this.jobs.find(x => x.id === id);
+      if (job && job.status === "completed") { this.loadReport(id); return; }
+      if (job && job.status === "failed") return;
+      this.sse = new EventSource(`/api/jobs/${id}/events`);
+      this.sse.onmessage = (e) => {
+        const j = JSON.parse(e.data);
+        const idx = this.jobs.findIndex(x => x.id === j.id);
+        if (idx >= 0) this.jobs[idx] = j;
+        if (j.status === "completed") { this.closeSSE(); this.loadReport(id); }
+        if (j.status === "failed") this.closeSSE();
+      };
+      this.sse.onerror = () => this.closeSSE();
+    },
+    closeSSE() { if (this.sse) { this.sse.close(); this.sse = null; } },
+    async loadReport(id) {
+      try { const r = await fetch(`/api/jobs/${id}/report`); if (r.ok) this.report = await r.json(); }
+      catch(e){}
+    },
+
+    get selJob() { return this.jobs.find(x => x.id === this.selectedId); },
+    get findings() { return this.report ? (this.report.findings||[]) : []; },
+    get binaries() { return this.report ? (this.report.binaries||[]) : []; },
+    get vclasses() { return [...new Set(this.findings.map(f => f.vuln_class))].sort(); },
+    get cveCount() { return new Set(this.findings.flatMap(f => f.cve_ids||[])).size; },
+    get classCounts() {
+      const m = {}; this.findings.forEach(f => m[f.vuln_class]=(m[f.vuln_class]||0)+1);
+      return Object.entries(m).map(([k,n])=>({k,n})).sort((a,b)=>b.n-a.n);
+    },
+    sevCount(s) { return this.findings.filter(f => f.severity === s).length; },
+    pct(n) { const max = Math.max(1, ...SEVS.map(s=>this.sevCount(s)), ...this.classCounts.map(c=>c.n)); return Math.round(100*n/max); },
+    get filtered() {
+      const rank = {critical:4,high:3,medium:2,low:1,info:0};
+      const q = (this.f.q||"").toLowerCase();
+      let out = this.findings.filter(f => {
+        if (!this.f.sev[f.severity]) return false;
+        if (this.f.vclass && f.vuln_class !== this.f.vclass) return false;
+        if (this.f.triage && (f.triage||"new") !== this.f.triage) return false;
+        if (f.confidence < this.f.minConf) return false;
+        if (q) {
+          const hay = (f.title+" "+f.description+" "+f.vuln_class+" "+
+            (f.evidence||[]).map(e=>(e.snippet||"")+" "+(e.function||"")).join(" ")).toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      out.sort((a,b) => this.sort==="confidence"
+        ? b.confidence-a.confidence
+        : (rank[b.severity]-rank[a.severity]) || (b.confidence-a.confidence));
+      return out;
+    },
+    async setTriage(f, state) {
+      const r = await fetch(`/api/jobs/${this.selectedId}/triage`, {method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({finding_id:f.id, state})});
+      if (r.ok) { f.triage = state; }
+      else { const j = await r.json(); alert(j.error||"triage failed"); }
+    },
+    exportURL(fmt) { return `/api/jobs/${this.selectedId}/report?format=${fmt}&download=1`; },
+
+    shortPath(p) { const parts=p.split("/"); return parts.length>3 ? ".../"+parts.slice(-2).join("/") : p; },
+    cvesFor(path) {
+      return [...new Set(this.findings.filter(f=>f.component===path).flatMap(f=>f.cve_ids||[]))].join(", ");
+    },
+    mitChips(m) {
+      if (!m) return "—";
+      const c = (label, good, cls) => `<span class="chip ${cls}">${good?'✓':'✗'} ${label}</span>`;
+      const relro = m.relro==="full" ? c("RELRO",true,"ok")
+                  : m.relro==="partial" ? `<span class="chip warn">~ RELRO</span>`
+                  : c("RELRO",false,"bad");
+      return [
+        c("NX", m.nx, m.nx?"ok":"bad"),
+        c("Canary", m.canary, m.canary?"ok":"bad"),
+        relro,
+        c("PIE", m.pie, m.pie?"ok":"bad"),
+        c("FORTIFY", m.fortify, m.fortify?"ok":"warn"),
+        m.stripped ? `<span class="chip warn">stripped</span>` : ""
+      ].join("");
+    },
+  };
+}
+</script>
+</body>
+</html>
