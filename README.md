@@ -1,5 +1,7 @@
 # IFDA — IoT Firmware Deep Analysis
 
+> English | [简体中文](README.zh-CN.md)
+
 Automated reverse engineering and vulnerability discovery for IoT firmware
 binaries. This repository implements the **analysis core** described in
 [`firmware-analysis-requirements.md`](firmware-analysis-requirements.md).
@@ -43,6 +45,39 @@ that drives this core one job at a time via the CLI. The JSON model
 (`ifda/model.py`) is the contract between the two; the core streams
 `@@IFDA@@<json>` progress events so the service shows live task progress. See
 [`service/README.md`](service/README.md) to build and run it.
+
+## Tech stack
+
+**Analysis core (Python 3.10+)**
+- [`capstone`](https://www.capstone-engine.org/) — multiarch disassembly (x86/x86_64, ARM, ARM Thumb-2, AArch64, MIPS LE/BE)
+- [`pyelftools`](https://github.com/eliben/pyelftools) — ELF parsing and mitigation detection (NX/canary/RELRO/PIE/FORTIFY), no external `binutils` process needed
+- [`cve-bin-tool`](https://github.com/intel/cve-bin-tool) — required dependency for FR-VUL-1's broad CVE correlation (NVD/OSV/RedHat/GitLab Advisory/Curl, 350+ components)
+- [`yara-python`](https://github.com/VirusTotal/yara-python) (optional) — externalized YARA signature-rule bridge
+- [`angr`](https://angr.io/) (optional, future) — heavier taint/symbolic-execution engine, planned drop-in behind the existing taint interfaces
+
+**Service layer (Go 1.22+)**
+- Standard library only, zero third-party Go dependencies — the enhanced `net/http` `ServeMux` (method + path-parameter routing), a hand-rolled PBKDF2 (`crypto/hmac` + `crypto/sha256`) for password hashing, `image`/`image/png` for the login CAPTCHA
+- Server-Sent Events (no polling, no WebSocket dependency) for live job progress
+
+**Web UI**
+- [Alpine.js](https://alpinejs.dev/) 3.14.1 (vendored locally, no build step, works air-gapped)
+- Plain CSS with custom-property theming (7 built-in themes, light/dark aware)
+
+**Optional enrichment**
+- [Ghidra](https://ghidra-sre.org/) (headless mode) — decompiled pseudocode enrichment for findings
+
+## References & acknowledgements
+
+- [**EMBA**](https://github.com/e-m-b-a/emba) — the open-source IoT firmware analyzer whose
+  approach to CVE correlation and sensitive-data hunting shaped several design decisions here.
+  IFDA follows EMBA's lead in delegating broad CVE correlation to `cve-bin-tool` rather than
+  maintaining a hand-curated CVE list, and its `config/` signature files (`deep_key_search.cfg`,
+  `password_regex.cfg`, the `*_files.cfg` sensitive-path lists) informed both the sensitive-string
+  keyword dictionary and a PEM-key detection gap this project fixed. Thanks to the EMBA team for
+  the prior art.
+- [**cve-bin-tool**](https://github.com/intel/cve-bin-tool) (an OpenSSF project) — the actual
+  engine behind FR-VUL-1's broad CVE coverage, and the same tool EMBA itself wraps for CVE
+  correlation.
 
 ## Install
 
