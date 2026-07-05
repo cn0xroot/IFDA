@@ -5,15 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IFDA — IoT Firmware Deep Analysis</title>
 <script>
-  // Apply the saved theme before first paint to avoid a flash of the default.
+  // Apply the saved theme/language before first paint to avoid a flash of the default.
   document.documentElement.setAttribute(
     "data-theme", localStorage.getItem("ifda-theme") || "midnight");
+  document.documentElement.lang =
+    (localStorage.getItem("ifda-lang") || "en") === "zh" ? "zh-CN" : "en";
 </script>
 <style>
   /* Themes ported from cn0xroot/AI_Web_Search (Genspark-style). Severity hues are
      shared; per-theme blocks override the surface/accent palette + --code. */
   :root { --crit:#ef4444; --high:#f97316; --med:#eab308; --low:#22c55e; --info:#38bdf8;
-          --ok:#22c55e; --bad:#ef4444; --warn:#eab308; }
+          --ok:#22c55e; --bad:#ef4444; --warn:#eab308; --login-bg-tint:55%; }
   :root, [data-theme="midnight"] {
     --bg:#07080f; --surface:#0d1117; --panel:#111827; --panel2:#161f2e;
     --line:#1e2a3a; --line2:#243044; --fg:#f1f5f9; --muted:#64748b; --soft:#94a3b8;
@@ -41,7 +43,8 @@
   [data-theme="light"] {
     --bg:#f8fafc; --surface:#ffffff; --panel:#ffffff; --panel2:#f1f5f9;
     --line:#e2e8f0; --line2:#cbd5e1; --fg:#0f172a; --muted:#64748b; --soft:#475569;
-    --accent:#6366f1; --accent-h:#4f46e5; --accent2:#a855f7; --code:#f1f5f9; }
+    --accent:#6366f1; --accent-h:#4f46e5; --accent2:#a855f7; --code:#f1f5f9;
+    --login-bg-tint:85%; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
          font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
@@ -53,7 +56,24 @@
               -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
   header .tag { color:var(--muted); font-size:12px; }
   header .spacer { flex:1; }
-  select.themesel { width:auto; padding:5px 8px; font-size:12px; cursor:pointer; }
+  select.themesel, select.langsel { width:auto; padding:5px 8px; font-size:12px; cursor:pointer; }
+  input.actorbox { width:120px; padding:5px 8px; font-size:12px; }
+  button.ghost.active { border-color:var(--accent); color:var(--accent); }
+
+  .usermenu { position:relative; }
+  .usermenu-btn { display:flex; align-items:center; gap:6px; }
+  .usermenu-btn .usericon { font-size:12px; line-height:1; }
+  .usermenu-btn .caret { font-size:9px; color:var(--muted); }
+  .usermenu-dropdown { position:absolute; top:calc(100% + 8px); right:0; z-index:50; width:200px;
+        background:color-mix(in srgb, var(--panel) 96%, transparent); backdrop-filter:blur(16px);
+        border:1px solid var(--line); border-radius:12px; padding:8px;
+        box-shadow:0 16px 40px -12px rgba(0,0,0,.45); display:flex; flex-direction:column; gap:2px; }
+  .usermenu-hdr { padding:8px 9px 10px; margin-bottom:4px; border-bottom:1px solid var(--line);
+        font-size:11px; color:var(--muted); display:flex; flex-direction:column; gap:2px; }
+  .usermenu-hdr strong { color:var(--fg); font-size:13px; }
+  .usermenu-dropdown button { background:none; border:0; color:var(--fg); text-align:left;
+        padding:8px 9px; border-radius:7px; font-size:13px; font-weight:500; }
+  .usermenu-dropdown button:hover { background:var(--panel2); }
   main { display:grid; grid-template-columns:380px 1fr; height:calc(100vh - 50px); }
   .left { border-right:1px solid var(--line); overflow-y:auto; padding:14px; }
   .right { overflow-y:auto; padding:18px 22px; }
@@ -74,19 +94,38 @@
   .uprow label { cursor:pointer; color:var(--accent); }
   .uprow input[type=file] { display:none; }
 
-  .job { background:var(--panel); border:1px solid var(--line); border-radius:8px;
-         padding:9px 11px; margin-bottom:7px; cursor:pointer; }
+  .batchbar { display:flex; align-items:center; gap:10px; margin-bottom:9px; font-size:12px; color:var(--muted); }
+  .batchbar .chk { display:flex; align-items:center; gap:5px; cursor:pointer; }
+  .batchbar .chk input { width:auto; }
+  .job { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+         padding:11px 13px; margin-bottom:8px; cursor:pointer; transition:border-color .15s; }
+  .job:hover { border-color:var(--line2); }
   .job.sel { border-color:var(--accent); background:var(--panel2); }
-  .job .row1 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  .job .target { font-family:ui-monospace,Menlo,monospace; font-size:12px;
+  .job .row1 { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .job .targetwrap { min-width:0; flex:1; }
+  .job .target-name { font-family:ui-monospace,Menlo,monospace; font-size:12.5px; font-weight:600;
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .job .target-dir { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--muted);
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
   .badge { font-size:10px; padding:1px 7px; border-radius:10px; text-transform:uppercase;
            letter-spacing:.04em; font-weight:700; }
   .badge.queued{background:var(--line2);color:var(--soft)} .badge.running{background:var(--accent);color:#fff}
   .badge.completed{background:#16a34a;color:#fff} .badge.failed{background:var(--bad);color:#fff}
+  .badge.paused{background:var(--warn);color:#0d1117} .badge.cancelled{background:var(--line2);color:var(--soft)}
+  .jobctl { display:flex; gap:6px; margin-top:7px; }
+  .proclog { background:var(--code); border:1px solid var(--line); border-radius:6px;
+             padding:8px 10px; margin-top:10px; max-height:50vh; overflow-y:auto;
+             font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .logrow { display:flex; gap:9px; padding:2px 0; border-bottom:1px solid var(--line); }
+  .logrow:last-child { border-bottom:0; }
+  .logrow .lt { color:var(--muted); white-space:nowrap; }
+  .logrow .ls { color:var(--accent-h); white-space:nowrap; }
+  .logrow .ld { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .logrow .lp { color:var(--muted); white-space:nowrap; }
   .bar { height:5px; background:var(--line2); border-radius:4px; margin-top:7px; overflow:hidden; }
   .bar > span { display:block; height:100%; background:var(--accent); transition:width .3s; }
-  .meta { color:var(--muted); font-size:11px; margin-top:5px; display:flex; gap:9px; flex-wrap:wrap; }
+  .meta { color:var(--muted); font-size:11px; margin-top:5px; display:flex; gap:9px; flex-wrap:wrap; align-items:center; }
+  .meta .time-ago { margin-left:auto; white-space:nowrap; }
 
   .sev-crit{color:var(--crit)} .sev-high{color:var(--high)} .sev-med{color:var(--med)}
   .sev-low{color:var(--low)} .sev-info{color:var(--info)}
@@ -103,6 +142,7 @@
   .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;
            margin-bottom:18px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card.clickable { cursor:pointer; } .card.clickable:hover { border-color:var(--accent); }
   .card .n { font-size:26px; font-weight:700; line-height:1.1; }
   .card .l { color:var(--muted); font-size:12px; margin-top:2px; }
 
@@ -111,6 +151,8 @@
   .distro h3, .table-wrap h3 { margin:0 0 10px; font-size:13px; color:var(--muted);
             text-transform:uppercase; letter-spacing:.05em; }
   .drow { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .drow.clickable { cursor:pointer; border-radius:4px; }
+  .drow.clickable:hover { background:var(--panel2); }
   .drow .k { width:74px; font-size:12px; text-transform:capitalize; }
   .drow .t { flex:1; height:16px; background:var(--line2); border-radius:4px; overflow:hidden; }
   .drow .t > span { display:block; height:100%; border-radius:4px; }
@@ -163,16 +205,178 @@
   .chip.ok{background:rgba(34,197,94,.15);color:var(--ok)}
   .chip.bad{background:rgba(239,68,68,.15);color:var(--bad)}
   .chip.warn{background:rgba(234,179,8,.15);color:var(--warn)}
+  .chip.neutral{background:var(--panel2);color:var(--muted)}
+
+  .vulndb-coverage { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:10px 0 16px; }
+  .vulndb-checkers { margin-bottom:20px; }
+  .vulndb-checkers summary { cursor:pointer; color:var(--muted); font-size:12px; margin-bottom:8px; }
+  .vulndb-checkers input { margin-bottom:8px; }
+  .checker-chips { display:flex; flex-wrap:wrap; gap:2px; max-height:220px; overflow-y:auto; }
 
   .empty { color:var(--muted); text-align:center; margin-top:64px; }
+  .loadingBox { display:flex; flex-direction:column; align-items:center; gap:14px; margin-top:80px; color:var(--muted); }
+  .spinner { width:34px; height:34px; border-radius:50%; border:3px solid var(--line);
+             border-top-color:var(--accent); animation:spin .8s linear infinite; }
+  .spinner.sm { width:16px; height:16px; border-width:2px; display:inline-block; vertical-align:middle; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  .kwrow { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px; }
+  .kwchip { display:inline-flex; align-items:center; gap:5px; background:var(--panel2);
+            border:1px solid var(--line); border-radius:14px; padding:3px 4px 3px 10px; font-size:12px; }
+  .kwchip button { background:none; color:var(--muted); padding:0 5px; font-size:13px; font-weight:700;
+                   border-radius:50%; line-height:1.4; }
+  .kwchip button:hover { color:var(--bad); background:none; }
+  .kwadd { display:flex; gap:6px; margin-bottom:14px; }
+  .kwadd input { width:220px; }
+
+  .loginOverlay { position:fixed; inset:0; z-index:1000; overflow:hidden;
+                  display:flex; align-items:center; justify-content:center;
+                  background:
+                    radial-gradient(ellipse 900px 560px at 12% 15%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 62%),
+                    radial-gradient(ellipse 760px 520px at 88% 85%, color-mix(in srgb, var(--accent2) 20%, transparent), transparent 62%),
+                    radial-gradient(ellipse 1000px 700px at 50% 50%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 70%),
+                    linear-gradient(color-mix(in srgb, var(--bg) var(--login-bg-tint), transparent),
+                                     color-mix(in srgb, var(--bg) var(--login-bg-tint), transparent)),
+                    url('login-bg.jpg') center/cover no-repeat,
+                    var(--bg); }
+  .loginOverlay::before { content:""; position:absolute; inset:0; pointer-events:none; opacity:.6;
+                  background-image: radial-gradient(circle, color-mix(in srgb, var(--soft) 35%, transparent) 1px, transparent 1px);
+                  background-size: 26px 26px;
+                  mask-image: radial-gradient(ellipse 65% 55% at 50% 45%, black, transparent 75%);
+                  -webkit-mask-image: radial-gradient(ellipse 65% 55% at 50% 45%, black, transparent 75%); }
+  .loginTopBar { position:absolute; top:22px; right:26px; display:flex; gap:8px; z-index:2; }
+  .loginCard { position:relative; z-index:1;
+               background: color-mix(in srgb, var(--panel) 90%, transparent);
+               backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+               border:1px solid color-mix(in srgb, var(--line2) 80%, transparent); border-radius:20px;
+               padding:46px 40px 38px; width:380px;
+               display:flex; flex-direction:column; align-items:stretch; gap:13px;
+               box-shadow: 0 30px 70px -24px rgba(0,0,0,.55),
+                           0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent);
+               animation: loginIn .55s cubic-bezier(.16,1,.3,1); }
+  @keyframes loginIn { from { opacity:0; transform:translateY(16px) scale(.97); } to { opacity:1; transform:none; } }
+  .loginMark { width:60px; height:60px; margin:0 auto 8px; border-radius:18px;
+               background:linear-gradient(135deg,var(--accent),var(--accent2));
+               display:flex; align-items:center; justify-content:center;
+               box-shadow: 0 14px 34px -10px color-mix(in srgb, var(--accent) 65%, transparent); }
+  .loginMark svg { width:32px; height:32px; stroke:#fff; }
+  .modalClose { position:absolute; top:14px; right:14px; width:26px; height:26px; padding:0;
+               background:var(--panel2); border:1px solid var(--line); border-radius:50%;
+               color:var(--muted); font-size:15px; line-height:1; display:flex;
+               align-items:center; justify-content:center; }
+  .modalClose:hover { color:var(--fg); border-color:var(--line2); }
+  .loginCard h2 { margin:0; text-align:center; font-size:26px; letter-spacing:.02em;
+                  background:linear-gradient(90deg,var(--accent),var(--accent2));
+                  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .loginFullname { margin:2px 0 0; text-align:center; font-size:12px; font-weight:600;
+                   letter-spacing:.03em; color:var(--soft); text-transform:uppercase; }
+  .loginCard .tag { margin:0 0 10px; text-align:center; font-size:13px; }
+  .loginCard input[type=text], .loginCard input[type=password] {
+        padding:12px 15px; border-radius:11px; font-size:14px;
+        background:color-mix(in srgb, var(--panel2) 80%, transparent);
+        border:1px solid var(--line); transition:border-color .15s, box-shadow .15s; }
+  .loginCard input[type=text]:focus, .loginCard input[type=password]:focus {
+        outline:none; border-color:var(--accent);
+        box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  .loginCard button[type=submit] { margin-top:8px; padding:12px 15px; border-radius:11px; font-size:14px;
+        background:linear-gradient(90deg,var(--accent),var(--accent2)); letter-spacing:.02em;
+        box-shadow:0 12px 26px -10px color-mix(in srgb, var(--accent) 55%, transparent);
+        transition:transform .15s, box-shadow .15s; }
+  .loginCard button[type=submit]:hover { transform:translateY(-1px);
+        box-shadow:0 16px 30px -10px color-mix(in srgb, var(--accent) 65%, transparent); }
+  .loginCard button[type=submit]:active { transform:translateY(0); }
+  .captchaRow { display:flex; gap:8px; align-items:center; }
+  .captchaRow img { height:42px; border-radius:8px; border:1px solid var(--line); cursor:pointer; }
+  .captchaRow input { flex:1; }
 </style>
 </head>
 <body x-data="app()" x-init="init()">
+<!-- LOGIN -->
+<div class="loginOverlay" x-show="showLogin" style="display:none" x-effect="showLogin && refreshCaptcha()">
+  <div class="loginTopBar">
+    <select class="themesel" x-model="theme" @change="applyTheme()" title="Theme / 主题">
+      <option value="midnight">🌙 暗夜 Midnight</option>
+      <option value="ocean">🌊 海洋 Ocean</option>
+      <option value="forest">🌲 森林 Forest</option>
+      <option value="dusk">🌆 暮色 Dusk</option>
+      <option value="rose">🌹 玫瑰 Rose</option>
+      <option value="nord">❄️ Nord</option>
+      <option value="light">☀️ 浅色 Light</option>
+    </select>
+    <select class="langsel" x-model="lang" @change="applyLang()" title="Language / 语言">
+      <option value="en">EN English</option>
+      <option value="zh">中文 Chinese</option>
+    </select>
+  </div>
+  <form class="loginCard" @submit.prevent="doLogin()">
+    <div class="loginMark">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2 4 5.5v6c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-6L12 2Z"/>
+        <path d="M9.5 12.2 11.3 14l3.4-4"/>
+      </svg>
+    </div>
+    <h2>IFDA</h2>
+    <p class="loginFullname" x-text="t('tagline')"></p>
+    <p class="tag" x-text="t('login_subtitle')"></p>
+    <input type="text" x-model="loginUser" :placeholder="t('login_username')" autocomplete="username" autofocus>
+    <input type="password" x-model="loginPass" :placeholder="t('login_password')" autocomplete="current-password">
+    <div class="captchaRow" x-show="captchaImg">
+      <img :src="captchaImg" :alt="t('login_captcha')" @click="refreshCaptcha()" :title="t('captcha_refresh_hint')">
+      <input type="text" x-model="captchaAnswer" :placeholder="t('login_captcha')" autocomplete="off" maxlength="8">
+    </div>
+    <button type="submit" x-text="t('login_submit')"></button>
+    <p class="sev-crit" x-show="loginError" x-text="loginError"></p>
+  </form>
+</div>
+<!-- CHANGE PASSWORD -->
+<div class="loginOverlay" x-show="showChangePassword" style="display:none" @click.self="showChangePassword=false">
+  <form class="loginCard" @submit.prevent="doChangePassword()">
+    <button type="button" class="modalClose" @click="showChangePassword=false" title="Close">×</button>
+    <div class="loginMark">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="7.5" cy="15.5" r="4.5"/>
+        <path d="M11 12 20 3"/>
+        <path d="M16 7l3 3"/>
+      </svg>
+    </div>
+    <h2 x-text="t('change_password_title')"></h2>
+    <p class="tag" x-text="t('change_password_hint')"></p>
+    <input type="password" x-model="oldPassword" :placeholder="t('old_password')" autocomplete="current-password" autofocus>
+    <input type="password" x-model="newPassword" :placeholder="t('new_password')" autocomplete="new-password">
+    <input type="password" x-model="newPassword2" :placeholder="t('confirm_new_password')" autocomplete="new-password">
+    <button type="submit" x-text="t('change_password_submit')"></button>
+    <p class="sev-crit" x-show="changePasswordError" x-text="changePasswordError"></p>
+    <p class="sev-low" x-show="changePasswordOk" x-text="t('change_password_ok')"></p>
+  </form>
+</div>
 <header>
   <h1>IFDA</h1>
-  <span class="tag">IoT Firmware Deep Analysis</span>
+  <span class="tag" x-text="t('tagline')"></span>
   <span class="spacer"></span>
-  <span class="tag" x-show="report" x-text="(report?.binaries?.length||0)+' binaries · '+(findings.length)+' findings'"></span>
+  <span class="tag" x-show="report" x-text="summaryText()"></span>
+  <input type="text" class="actorbox" x-model="actor" @change="localStorage.setItem('ifda-actor', actor)"
+         :placeholder="t('actor_placeholder')" :title="t('actor_hint')">
+  <button class="ghost sm" :class="{active: compareMode}" @click="toggleCompare()" x-text="t('btn_compare')"></button>
+  <button class="ghost sm" :class="{active: showVulnDB}" @click="toggleVulnDB()" x-text="t('btn_vulndb')"></button>
+  <button class="ghost sm" :class="{active: showSensitiveDict}" @click="toggleSensitiveDict()" x-text="t('btn_sensitive_dict')"></button>
+  <div class="usermenu" x-show="loginRequired && authToken" x-data="{}" @click.outside="showUserMenu=false">
+    <button class="ghost sm usermenu-btn" :class="{active: showUserMenu}" @click="showUserMenu=!showUserMenu">
+      <span class="usericon">👤</span><span x-text="username||t('user_center')"></span>
+      <span class="caret" x-text="showUserMenu?'▴':'▾'"></span>
+    </button>
+    <div class="usermenu-dropdown" x-show="showUserMenu" style="display:none" x-transition>
+      <div class="usermenu-hdr">
+        <span x-text="t('signed_in_as')"></span>
+        <strong x-text="username||'—'"></strong>
+      </div>
+      <button type="button" @click="showUserMenu=false; openChangePassword()" x-text="t('btn_change_password')"></button>
+      <button type="button" @click="showUserMenu=false; doLogout()" x-text="t('btn_logout')"></button>
+    </div>
+  </div>
+  <select class="langsel" x-model="lang" @change="applyLang()" title="Language / 语言">
+    <option value="en">EN English</option>
+    <option value="zh">中文 Chinese</option>
+  </select>
   <select class="themesel" x-model="theme" @change="applyTheme()" title="Theme / 主题">
     <option value="midnight">🌙 暗夜 Midnight</option>
     <option value="ocean">🌊 海洋 Ocean</option>
@@ -188,33 +392,70 @@
   <!-- LEFT: submit + job list -->
   <div class="left">
     <div class="submit">
-      <input type="text" x-model="target" placeholder="/path/to/binary or extracted rootfs"
+      <input type="text" x-model="target" :placeholder="t('target_placeholder')"
              @keydown.enter="submit()">
-      <button @click="submit()">Analyze</button>
+      <button @click="submit()" x-text="t('analyze')"></button>
+    </div>
+    <div class="uprow">
+      <label :title="ghidraAvailable ? '' : t('decompile_unavailable_hint')">
+        <input type="checkbox" x-model="decompile" :disabled="!ghidraAvailable"
+               style="width:auto;display:inline;vertical-align:middle;margin-right:5px">
+        <span x-text="t('decompile_label')"></span>
+      </label>
+      <span x-show="!ghidraAvailable" class="chip warn" x-text="t('decompile_unavailable')"></span>
     </div>
     <div class="uprow">
       <label>
-        <span x-text="uploading ? 'Uploading…' : '⬆ Upload a file'"></span>
+        <span x-text="uploading ? t('uploading') : t('upload_file')"></span>
         <input type="file" @change="upload($event)">
       </label>
-      <span>— stored server-side, then analyzed</span>
+      <span x-text="t('upload_hint')"></span>
     </div>
 
     <template x-if="!jobs.length">
-      <div class="empty">No jobs yet.</div>
+      <div class="empty" x-text="t('no_jobs')"></div>
     </template>
+    <div class="batchbar" x-show="deletableJobs.length">
+      <label class="chk"><input type="checkbox" :checked="deleteSelected.length && deleteSelected.length===deletableJobs.length"
+                                 @change="selectAllForDelete()">
+        <span x-text="t('select_all')"></span></label>
+      <button class="ghost sm" x-show="deleteSelected.length" @click="deleteSelectedJobs()"
+              x-text="`${t('btn_delete_selected')} (${deleteSelected.length})`"></button>
+    </div>
     <template x-for="j in jobs" :key="j.id">
       <div class="job" :class="{sel: j.id===selectedId}" @click="select(j.id)">
         <div class="row1">
-          <span class="target" :title="j.target" x-text="j.target"></span>
-          <span class="badge" :class="j.status" x-text="j.status"></span>
+          <input type="checkbox" x-show="['completed','failed','cancelled'].includes(j.status)"
+                 :checked="deleteSelected.includes(j.id)" @click.stop="toggleDeleteSelect(j.id)"
+                 style="width:auto;flex:none">
+          <div class="targetwrap">
+            <div class="target-name" :title="j.target" x-text="targetName(j.target)"></div>
+            <div class="target-dir" x-show="targetDir(j.target)" :title="j.target" x-text="targetDir(j.target)"></div>
+          </div>
+          <span class="badge" :class="j.status" x-text="tStatus(j.status)"></span>
         </div>
         <div class="bar"><span :style="`width:${j.progress}%`"></span></div>
         <div class="meta">
-          <span x-text="(j.stage||'—')+' '+j.progress+'%'"></span>
-          <span x-show="j.detail" x-text="j.detail"></span>
-          <span x-show="j.status==='completed'" x-text="j.findings+' findings · '+j.high_crit+' high/crit'+(j.cache_hit?' · cached':'')"></span>
-          <span x-show="j.status==='failed'" class="sev-crit" x-text="j.error||'failed'"></span>
+          <span x-show="['queued','running'].includes(j.status) && !j.stage" class="spinner sm"></span>
+          <span x-text="(j.stage||(j.status==='queued'?t('waiting_to_start'):'—'))+' '+j.progress+'%'"></span>
+          <span x-show="j.detail && j.status!=='completed'" x-text="j.detail"></span>
+          <template x-if="j.status==='completed'">
+            <span style="display:flex;gap:4px;align-items:center">
+              <span class="chip" :class="j.high_crit>0 ? 'bad' : 'ok'" x-text="j.findings+' '+t('chip_findings')"></span>
+              <template x-if="j.high_crit>0"><span class="chip bad" x-text="j.high_crit+' '+t('chip_highcrit')"></span></template>
+              <template x-if="j.cache_hit"><span class="chip neutral" x-text="t('cached')"></span></template>
+            </span>
+          </template>
+          <span x-show="j.status==='failed'" class="sev-crit" x-text="j.error||tStatus('failed')"></span>
+          <span class="time-ago" x-text="timeAgo(j.finished_at||j.created_at)"></span>
+        </div>
+        <div class="jobctl" x-show="['queued','running','paused'].includes(j.status)" @click.stop>
+          <button class="ghost sm" x-show="j.status==='running'" @click="pauseJob(j.id)" x-text="t('btn_pause')"></button>
+          <button class="ghost sm" x-show="j.status==='paused'" @click="resumeJob(j.id)" x-text="t('btn_resume')"></button>
+          <button class="ghost sm" @click="stopJob(j.id)" x-text="t('btn_stop')"></button>
+        </div>
+        <div class="jobctl" x-show="['completed','failed','cancelled'].includes(j.status)" @click.stop>
+          <button class="ghost sm" @click="deleteJob(j.id)" x-text="t('btn_delete')"></button>
         </div>
       </div>
     </template>
@@ -222,59 +463,306 @@
 
   <!-- RIGHT: report views -->
   <div class="right">
-    <template x-if="!selJob">
-      <div class="empty">Submit or select a job to see results.</div>
-    </template>
-
-    <template x-if="selJob && selJob.status!=='completed'">
+    <!-- CVE DATABASE -->
+    <template x-if="showVulnDB">
       <div>
-        <h2 x-text="selJob.target"></h2>
-        <p>Status: <span class="badge" :class="selJob.status" x-text="selJob.status"></span></p>
-        <div class="bar" style="max-width:420px"><span :style="`width:${selJob.progress}%`"></span></div>
-        <p class="meta"><span x-text="(selJob.stage||'')+' — '+(selJob.detail||'')+' ('+selJob.progress+'%)'"></span></p>
-        <p x-show="selJob.status==='failed'" class="sev-crit" x-text="selJob.error"></p>
+        <h2 x-text="t('btn_vulndb')"></h2>
+        <p class="tag" x-text="t('vulndb_hint')"></p>
+        <template x-if="vulnDBLoading">
+          <div class="loadingBox"><div class="spinner"></div><div x-text="t('loading')"></div></div>
+        </template>
+        <template x-if="!vulnDBLoading">
+          <div>
+            <div class="vulndb-coverage">
+              <span class="chip" :class="vulnDBCoverage?.available ? 'ok' : 'bad'"
+                    x-text="vulnDBCoverage?.available ? t('vulndb_cvebin_yes') : t('vulndb_cvebin_no')"></span>
+              <template x-if="vulnDBCoverage?.available">
+                <span class="tag">
+                  <span x-text="vulnDBCoverage.checker_count"></span>
+                  <span x-text="t('vulndb_cvebin_components')"></span>
+                  (<span x-text="(vulnDBCoverage.data_sources||[]).join(', ')"></span>)
+                </span>
+              </template>
+            </div>
+            <template x-if="vulnDBCoverage?.available">
+              <div class="tag" style="margin-bottom:14px">
+                <span x-text="t('vulndb_cve_count_label')"></span>:
+                <strong x-text="(vulnDBCoverage.cve_count_total||0).toLocaleString()"></strong>
+                <template x-if="vulnDBCoverage.cve_counts && Object.keys(vulnDBCoverage.cve_counts).length">
+                  <span>
+                    (<template x-for="(n, src) in vulnDBCoverage.cve_counts" :key="src"><span x-text="src+': '+n.toLocaleString()+'  '"></span></template>)
+                  </span>
+                </template>
+                <br><span x-text="t('vulndb_cve_count_hint')"></span>
+              </div>
+            </template>
+            <template x-if="vulnDBCoverage?.available && vulnDBCoverage.checkers?.length">
+              <details class="vulndb-checkers">
+                <summary x-text="t('vulndb_checkers_summary')"></summary>
+                <input type="text" class="sm" :placeholder="t('vulndb_checkers_filter')" x-model="vulnDBCheckerFilter">
+                <div class="checker-chips">
+                  <template x-for="name in filteredCheckers" :key="name">
+                    <span class="chip neutral" x-text="name"></span>
+                  </template>
+                </div>
+              </details>
+            </template>
+
+            <h3 x-text="t('vulndb_curated_heading')"></h3>
+            <template x-if="vulnDBRows.length">
+              <div class="table-wrap">
+                <table class="bins">
+                  <thead><tr>
+                    <th x-text="t('th_component')"></th><th x-text="t('th_cves')"></th>
+                    <th x-text="t('th_severity')"></th><th x-text="t('th_affected_versions')"></th>
+                    <th x-text="t('th_summary')"></th>
+                  </tr></thead>
+                  <tbody>
+                    <template x-for="row in vulnDBRows" :key="row.component+row.cve">
+                      <tr>
+                        <td x-text="row.component"></td>
+                        <td x-text="row.cve"></td>
+                        <td><span class="sevtag" :class="'bg-'+SHORT[row.severity]" x-text="tSev(row.severity)"></span></td>
+                        <td x-text="row.versionText"></td>
+                        <td x-text="row.summary"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+            <template x-if="!vulnDBRows.length"><div class="empty" x-text="t('vulndb_empty')"></div></template>
+          </div>
+        </template>
       </div>
     </template>
 
-    <template x-if="selJob && selJob.status==='completed' && report">
+    <!-- SENSITIVE-STRING DICTIONARY (standalone management, independent of any scan) -->
+    <template x-if="showSensitiveDict">
+      <div>
+        <h2 x-text="t('btn_sensitive_dict')"></h2>
+        <p class="tag" x-text="t('kw_help')"></p>
+        <div class="kwrow">
+          <template x-for="k in sensitiveKeywords" :key="k">
+            <span class="kwchip"><span x-text="k"></span>
+              <button type="button" @click="removeKeyword(k)" title="remove">×</button></span>
+          </template>
+        </div>
+        <div class="kwadd">
+          <input type="text" x-model="newKeyword" @keydown.enter="addKeyword()"
+                 :placeholder="t('kw_add_placeholder')">
+          <button class="ghost sm" @click="addKeyword()" x-text="t('kw_add_btn')"></button>
+          <button class="ghost sm" @click="resetKeywords()" x-text="t('kw_reset_btn')"></button>
+        </div>
+        <p class="meta" x-text="sensitiveKeywords.length+' '+t('kw_count_label')"></p>
+      </div>
+    </template>
+
+    <!-- COMPARE -->
+    <template x-if="!showVulnDB && !showSensitiveDict && compareMode">
+      <div>
+        <h2 x-text="t('btn_compare')"></h2>
+        <div class="filters">
+          <select x-model="compareA">
+            <option value="" x-text="t('compare_pick_a')"></option>
+            <template x-for="j in completedJobs" :key="j.id">
+              <option :value="j.id" x-text="j.target+' ('+j.id+')'"></option>
+            </template>
+          </select>
+          <select x-model="compareB">
+            <option value="" x-text="t('compare_pick_b')"></option>
+            <template x-for="j in completedJobs" :key="j.id">
+              <option :value="j.id" x-text="j.target+' ('+j.id+')'"></option>
+            </template>
+          </select>
+          <button @click="runCompare()" x-text="t('btn_run_compare')"></button>
+        </div>
+        <template x-if="comparing">
+          <div class="loadingBox"><div class="spinner"></div><div x-text="t('comparing')"></div></div>
+        </template>
+        <template x-if="compareResult">
+          <div>
+            <div class="cards">
+              <div class="card"><div class="n sev-crit" x-text="compareResult.added.length"></div><div class="l" x-text="t('compare_added')"></div></div>
+              <div class="card"><div class="n sev-low" x-text="compareResult.removed.length"></div><div class="l" x-text="t('compare_removed')"></div></div>
+              <div class="card"><div class="n" x-text="compareResult.common.length"></div><div class="l" x-text="t('compare_common')"></div></div>
+            </div>
+            <h3 x-text="t('compare_added')"></h3>
+            <template x-if="!compareResult.added.length"><div class="empty" x-text="t('compare_none')"></div></template>
+            <template x-for="(f, fidx) in compareResult.added" :key="f.id+'-'+fidx">
+              <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
+                <div class="hd" @click="open=!open">
+                  <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
+                  <span class="t" x-text="f.title"></span>
+                  <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
+                  <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0" x-text="f.cve_ids.join(', ')"></span>
+                  <span x-text="open?'▾':'▸'"></span>
+                </div>
+                <div class="body" x-show="open">
+                  <div class="sub" x-text="t('component_label')+': '+f.component+'  ·  '+t('rule_label')+': '+f.rule+'  ·  '+t('id_label')+': '+f.id"></div>
+                  <div class="desc" x-text="f.description"></div>
+                  <template x-for="(e,i) in (f.evidence||[])" :key="i">
+                    <div class="ev"><span class="loc" x-text="[e.binary,e.function,e.address].filter(Boolean).join(' : ')"></span><br>
+                      <span x-text="e.snippet"></span>
+                      <template x-if="e.taint_path && e.taint_path.length">
+                        <div class="taint" x-text="'↳ '+e.taint_path.join(' → ')"></div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="f.pseudocode">
+                    <details>
+                      <summary style="cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px" x-text="t('pseudocode_label')"></summary>
+                      <pre class="code" x-text="f.pseudocode"></pre>
+                    </details>
+                  </template>
+                  <div class="sub" x-show="f.remediation" x-text="'▸ '+f.remediation"></div>
+                </div>
+              </div>
+            </template>
+            <h3 style="margin-top:18px" x-text="t('compare_removed')"></h3>
+            <template x-if="!compareResult.removed.length"><div class="empty" x-text="t('compare_none')"></div></template>
+            <template x-for="(f, fidx) in compareResult.removed" :key="f.id+'-'+fidx">
+              <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
+                <div class="hd" @click="open=!open">
+                  <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
+                  <span class="t" x-text="f.title"></span>
+                  <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
+                  <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0" x-text="f.cve_ids.join(', ')"></span>
+                  <span x-text="open?'▾':'▸'"></span>
+                </div>
+                <div class="body" x-show="open">
+                  <div class="sub" x-text="t('component_label')+': '+f.component+'  ·  '+t('rule_label')+': '+f.rule+'  ·  '+t('id_label')+': '+f.id"></div>
+                  <div class="desc" x-text="f.description"></div>
+                  <template x-for="(e,i) in (f.evidence||[])" :key="i">
+                    <div class="ev"><span class="loc" x-text="[e.binary,e.function,e.address].filter(Boolean).join(' : ')"></span><br>
+                      <span x-text="e.snippet"></span>
+                      <template x-if="e.taint_path && e.taint_path.length">
+                        <div class="taint" x-text="'↳ '+e.taint_path.join(' → ')"></div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="f.pseudocode">
+                    <details>
+                      <summary style="cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px" x-text="t('pseudocode_label')"></summary>
+                      <pre class="code" x-text="f.pseudocode"></pre>
+                    </details>
+                  </template>
+                  <div class="sub" x-show="f.remediation" x-text="'▸ '+f.remediation"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && !selJob">
+      <div class="empty" x-text="t('select_job')"></div>
+    </template>
+
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status!=='completed'">
+      <div>
+        <h2 x-text="selJob.target"></h2>
+        <p><span x-text="t('status_label')"></span> <span class="badge" :class="selJob.status" x-text="tStatus(selJob.status)"></span></p>
+        <div class="bar" style="max-width:420px"><span :style="`width:${selJob.progress}%`"></span></div>
+        <p class="meta">
+          <span x-show="['queued','running'].includes(selJob.status) && !selJob.stage" class="spinner sm"></span>
+          <span x-text="(selJob.stage||(selJob.status==='queued'?t('waiting_to_start'):''))+' — '+(selJob.detail||'')+' ('+selJob.progress+'%)'"></span>
+        </p>
+        <p x-show="selJob.status==='failed'" class="sev-crit" x-text="selJob.error"></p>
+        <div class="jobctl" x-show="['queued','running','paused'].includes(selJob.status)">
+          <button x-show="selJob.status==='running'" @click="pauseJob(selJob.id)" x-text="t('btn_pause')"></button>
+          <button x-show="selJob.status==='paused'" @click="resumeJob(selJob.id)" x-text="t('btn_resume')"></button>
+          <button class="ghost" @click="stopJob(selJob.id)" x-text="t('btn_stop')"></button>
+        </div>
+        <h3 style="margin-top:22px" x-text="t('process_log')"></h3>
+        <template x-if="!(selJob.log&&selJob.log.length)"><div class="empty" style="margin-top:12px" x-text="t('no_log_yet')"></div></template>
+        <div class="proclog" x-show="selJob.log&&selJob.log.length" x-ref="proclog"
+             x-effect="selJob && selJob.log && selJob.log.length && $nextTick(() => { $refs.proclog.scrollTop = $refs.proclog.scrollHeight })">
+          <template x-for="(e,i) in (selJob.log||[])" :key="i">
+            <div class="logrow">
+              <span class="lt" x-text="logTime(e.time)"></span>
+              <span class="ls" x-text="e.stage"></span>
+              <span class="ld" x-text="e.detail"></span>
+              <span class="lp" x-text="e.pct+'%'"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && !report">
+      <div class="loadingBox">
+        <template x-if="!reportLoadError">
+          <div class="spinner"></div>
+        </template>
+        <div x-show="!reportLoadError" x-text="t('loading_report')"></div>
+        <template x-if="reportLoadError">
+          <div style="text-align:center">
+            <div class="sev-crit" x-text="t('report_load_failed')+': '+reportLoadError"></div>
+            <button class="ghost sm" style="margin-top:10px" @click="loadReport(selJob.id)" x-text="t('btn_retry')"></button>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && report">
       <div>
         <div class="tabs">
-          <button :class="{active:tab==='dashboard'}" @click="tab='dashboard'">Dashboard</button>
+          <button :class="{active:tab==='dashboard'}" @click="tab='dashboard'" x-text="t('tab_dashboard')"></button>
           <button :class="{active:tab==='findings'}" @click="tab='findings'"
-                  x-text="`Findings (${findings.length})`"></button>
+                  x-text="`${t('tab_findings')} (${findings.length})`"></button>
           <button :class="{active:tab==='binaries'}" @click="tab='binaries'"
-                  x-text="`Binaries (${binaries.length})`"></button>
+                  x-text="`${t('tab_binaries')} (${binaries.length})`"></button>
+          <button :class="{active:tab==='scripts'}" @click="tab='scripts'"
+                  x-text="`${t('tab_scripts')} (${scripts.length})`"></button>
+          <button :class="{active:tab==='components'}" @click="tab='components'"
+                  x-text="`${t('tab_components')} (${components.length})`"></button>
+          <button :class="{active:tab==='strings'}" @click="tab='strings'; onStringsTab()"
+                  x-text="`${t('tab_strings')} (${totalStrings})`"></button>
+          <button :class="{active:tab==='sensitive'}" @click="tab='sensitive'; computeSensitive()"
+                  x-text="`${t('tab_sensitive')} (${sensitiveResults.length})`"></button>
           <span class="spacer"></span>
           <div class="exp">
-            <a :href="exportURL('json')"><button class="ghost sm">JSON</button></a>
-            <a :href="exportURL('md')"><button class="ghost sm">Markdown</button></a>
-            <a :href="exportURL('sbom')"><button class="ghost sm">SBOM</button></a>
+            <a :href="exportURL('json')"><button class="ghost sm" x-text="t('export_json')"></button></a>
+            <a :href="exportURL('md')"><button class="ghost sm" x-text="t('export_md')"></button></a>
+            <a :href="exportURL('sbom')"><button class="ghost sm" x-text="t('export_sbom')"></button></a>
           </div>
         </div>
 
         <!-- DASHBOARD -->
         <div x-show="tab==='dashboard'">
           <div class="cards">
-            <div class="card"><div class="n" x-text="findings.length"></div><div class="l">Findings</div></div>
-            <div class="card"><div class="n sev-crit" x-text="sevCount('critical')"></div><div class="l">Critical</div></div>
-            <div class="card"><div class="n sev-high" x-text="sevCount('high')"></div><div class="l">High</div></div>
-            <div class="card"><div class="n" x-text="binaries.length"></div><div class="l">Binaries</div></div>
-            <div class="card"><div class="n" x-text="cveCount"></div><div class="l">CVEs</div></div>
+            <div class="card" :class="{clickable: findings.length>0}" @click="findings.length>0 && goToFindings()">
+              <div class="n" x-text="findings.length"></div><div class="l" x-text="t('card_findings')"></div>
+            </div>
+            <div class="card" :class="{clickable: sevCount('critical')>0}" @click="sevCount('critical')>0 && goToFindings({sevOnly:'critical'})">
+              <div class="n sev-crit" x-text="sevCount('critical')"></div><div class="l" x-text="t('card_critical')"></div>
+            </div>
+            <div class="card" :class="{clickable: sevCount('high')>0}" @click="sevCount('high')>0 && goToFindings({sevOnly:'high'})">
+              <div class="n sev-high" x-text="sevCount('high')"></div><div class="l" x-text="t('card_high')"></div>
+            </div>
+            <div class="card" :class="{clickable: binaries.length>0}" @click="binaries.length>0 && (tab='binaries')">
+              <div class="n" x-text="binaries.length"></div><div class="l" x-text="t('card_binaries')"></div>
+            </div>
+            <div class="card" :class="{clickable: cveCount>0}" @click="cveCount>0 && goToCves()">
+              <div class="n" x-text="cveCount"></div><div class="l" x-text="t('card_cves')"></div>
+            </div>
           </div>
           <div class="distro">
-            <h3>By severity</h3>
+            <h3 x-text="t('by_severity')"></h3>
             <template x-for="s in SEVS" :key="s">
-              <div class="drow" x-show="sevCount(s)>0">
-                <div class="k" :class="'sev-'+SHORT[s]" x-text="s"></div>
+              <div class="drow clickable" x-show="sevCount(s)>0" @click="goToFindings({sevOnly:s})">
+                <div class="k" :class="'sev-'+SHORT[s]" x-text="tSev(s)"></div>
                 <div class="t"><span :class="'bg-'+SHORT[s]" :style="`width:${pct(sevCount(s))}%`"></span></div>
                 <div class="v" x-text="sevCount(s)"></div>
               </div>
             </template>
           </div>
           <div class="distro">
-            <h3>By vulnerability class</h3>
+            <h3 x-text="t('by_vuln_class')"></h3>
             <template x-for="vc in classCounts" :key="vc.k">
-              <div class="drow">
+              <div class="drow clickable" @click="goToFindings({vclass:vc.k})">
                 <div class="k" style="width:160px" x-text="vc.k"></div>
                 <div class="t"><span class="bg-info" :style="`width:${pct(vc.n)}%`"></span></div>
                 <div class="v" x-text="vc.n"></div>
@@ -289,45 +777,47 @@
             <div class="sevtog">
               <template x-for="s in SEVS" :key="s">
                 <button :class="{on:f.sev[s]}" :style="f.sev[s]?`background:var(--${SHORT[s]});border-color:var(--${SHORT[s]})`:''"
-                        @click="f.sev[s]=!f.sev[s]" x-text="s[0].toUpperCase()" :title="s"></button>
+                        @click="f.sev[s]=!f.sev[s]" x-text="tSev(s)[0].toUpperCase()" :title="tSev(s)"></button>
               </template>
             </div>
             <select x-model="f.vclass">
-              <option value="">All classes</option>
+              <option value="" x-text="t('filter_all_classes')"></option>
               <template x-for="c in vclasses" :key="c"><option :value="c" x-text="c"></option></template>
             </select>
             <select x-model="f.triage">
-              <option value="">Any triage</option>
-              <option value="new">new</option>
-              <option value="confirmed">confirmed</option>
-              <option value="false_positive">false positive</option>
-              <option value="accepted_risk">accepted risk</option>
+              <option value="" x-text="t('filter_any_triage')"></option>
+              <option value="new" x-text="tTriage('new')"></option>
+              <option value="confirmed" x-text="tTriage('confirmed')"></option>
+              <option value="false_positive" x-text="tTriage('false_positive')"></option>
+              <option value="accepted_risk" x-text="tTriage('accepted_risk')"></option>
             </select>
-            <input type="text" x-model="f.q" placeholder="search title/snippet/function…">
-            <label class="rng">conf ≥
+            <input type="text" x-model="f.q" :placeholder="t('search_placeholder')">
+            <label class="rng"><span x-text="t('conf_label')"></span>
               <input type="range" min="0" max="1" step="0.05" x-model.number="f.minConf" style="width:90px">
               <span x-text="f.minConf"></span>
             </label>
             <select x-model="sort">
-              <option value="severity">sort: severity</option>
-              <option value="confidence">sort: confidence</option>
+              <option value="severity" x-text="t('sort_severity')"></option>
+              <option value="confidence" x-text="t('sort_confidence')"></option>
             </select>
             <span class="count" x-text="filtered.length+' / '+findings.length"></span>
+            <button class="ghost sm" @click="exportFilteredCSV()" x-text="t('export_filtered_csv')"></button>
+            <button class="ghost sm" @click="exportFilteredJSON()" x-text="t('export_filtered_json')"></button>
           </div>
 
-          <template x-if="!filtered.length"><div class="empty">No findings match the filters.</div></template>
-          <template x-for="f in filtered" :key="f.id">
+          <template x-if="!filtered.length"><div class="empty" x-text="t('no_findings_match')"></div></template>
+          <template x-for="(f, fidx) in filtered" :key="f.id+'-'+fidx">
             <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
-              <div class="hd" @click="open=!open">
-                <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="f.severity"></span>
+              <div class="hd" @click="open=!open; if(open) triageHistoryFor(f.id)">
+                <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
                 <span class="t" x-text="f.title"></span>
                 <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
-                <span x-show="(f.triage&&f.triage!=='new')" class="cur" :class="f.triage" x-text="f.triage"></span>
+                <span x-show="(f.triage&&f.triage!=='new')" class="cur" :class="f.triage" x-text="tTriage(f.triage)"></span>
                 <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0" x-text="f.cve_ids.join(', ')"></span>
                 <span x-text="open?'▾':'▸'"></span>
               </div>
               <div class="body" x-show="open">
-                <div class="sub" x-text="'component: '+f.component+'  ·  rule: '+f.rule+'  ·  id: '+f.id"></div>
+                <div class="sub" x-text="t('component_label')+': '+f.component+'  ·  '+t('rule_label')+': '+f.rule+'  ·  '+t('id_label')+': '+f.id"></div>
                 <div class="desc" x-text="f.description"></div>
                 <template x-for="(e,i) in (f.evidence||[])" :key="i">
                   <div class="ev"><span class="loc" x-text="[e.binary,e.function,e.address].filter(Boolean).join(' : ')"></span><br>
@@ -339,17 +829,29 @@
                 </template>
                 <template x-if="f.pseudocode">
                   <details>
-                    <summary style="cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px">Decompiled pseudocode (Ghidra)</summary>
+                    <summary style="cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px" x-text="t('pseudocode_label')"></summary>
                     <pre class="code" x-text="f.pseudocode"></pre>
                   </details>
                 </template>
                 <div class="sub" x-show="f.remediation" x-text="'▸ '+f.remediation"></div>
                 <div class="tristrip">
-                  <span class="lab">Triage:</span>
-                  <button class="ghost sm" @click="setTriage(f,'confirmed')">Confirm</button>
-                  <button class="ghost sm" @click="setTriage(f,'false_positive')">False positive</button>
-                  <button class="ghost sm" @click="setTriage(f,'accepted_risk')">Accept risk</button>
-                  <button class="ghost sm" @click="setTriage(f,'new')">Reset</button>
+                  <span class="lab" x-text="t('triage_colon')"></span>
+                  <button class="ghost sm" @click="setTriage(f,'confirmed')" x-text="t('btn_confirm')"></button>
+                  <button class="ghost sm" @click="setTriage(f,'false_positive')" x-text="t('btn_false_positive')"></button>
+                  <button class="ghost sm" @click="setTriage(f,'accepted_risk')" x-text="t('btn_accept_risk')"></button>
+                  <button class="ghost sm" @click="setTriage(f,'new')" x-text="t('btn_reset')"></button>
+                </div>
+                <div class="sub" style="margin-top:8px">
+                  <span x-text="t('triage_history_label')+':'"></span>
+                  <template x-if="!(triageHistoryCache[f.id]&&triageHistoryCache[f.id].length)">
+                    <span x-text="t('no_triage_history')"></span>
+                  </template>
+                  <template x-for="(e,i) in (triageHistoryCache[f.id]||[])" :key="i">
+                    <div class="ev" style="padding:4px 8px">
+                      <span x-text="logTime(e.time)"></span> — <span x-text="tTriage(e.state)"></span>
+                      <span x-show="e.actor" x-text="' ('+e.actor+')'"></span>
+                    </div>
+                  </template>
                 </div>
               </div>
             </div>
@@ -360,7 +862,12 @@
         <div x-show="tab==='binaries'">
           <div class="table-wrap">
             <table class="bins">
-              <thead><tr><th>Binary</th><th>Arch</th><th>libc</th><th>Mitigations</th><th>Fns</th><th>CVEs</th></tr></thead>
+              <thead><tr>
+                <th x-text="t('th_binary')"></th><th x-text="t('th_arch')"></th><th x-text="t('th_libc')"></th>
+                <th x-text="t('th_mitigations')"></th><th x-text="t('th_fns')"></th><th x-text="t('th_warnings')"></th>
+                <th x-text="t('th_cves')"></th>
+                <th x-text="t('th_strings')"></th>
+              </tr></thead>
               <tbody>
                 <template x-for="b in binaries" :key="b.path">
                   <tr>
@@ -369,12 +876,130 @@
                     <td x-text="b.libc||'—'"></td>
                     <td x-html="mitChips(b.mitigations)"></td>
                     <td x-text="(b.functions&&b.functions.length)||0"></td>
-                    <td x-text="cvesFor(b.path)||'—'"></td>
+                    <td>
+                      <span x-show="b.warnings&&b.warnings.length" class="chip warn"
+                            :title="(b.warnings||[]).join('\n')" x-text="'⚠ '+((b.warnings&&b.warnings.length)||0)"></span>
+                      <span x-show="!(b.warnings&&b.warnings.length)">—</span>
+                    </td>
+                    <td>
+                      <a href="#" x-show="cvesFor(b.path)" @click.prevent="goToCves(b.path)"
+                         x-text="cvesFor(b.path)"></a>
+                      <span x-show="!cvesFor(b.path)">—</span>
+                    </td>
+                    <td><a href="#" @click.prevent="tab='strings'; stringsBinary=b.path"
+                           x-text="(b.strings&&b.strings.length)||0"></a></td>
                   </tr>
                 </template>
               </tbody>
             </table>
           </div>
+        </div>
+
+        <!-- SCRIPTS -->
+        <div x-show="tab==='scripts'">
+          <template x-if="!scripts.length"><div class="empty" x-text="t('no_scripts')"></div></template>
+          <div class="table-wrap" x-show="scripts.length">
+            <table class="bins">
+              <thead><tr>
+                <th x-text="t('th_script')"></th><th x-text="t('th_kind')"></th><th x-text="t('th_findings')"></th>
+              </tr></thead>
+              <tbody>
+                <template x-for="s in scripts" :key="s.path">
+                  <tr>
+                    <td class="path" :title="s.path" x-text="shortPath(s.path)"></td>
+                    <td x-text="s.kind"></td>
+                    <td>
+                      <a href="#" x-show="s.findings" @click.prevent="goToFindings({q:s.path})" x-text="s.findings"></a>
+                      <span x-show="!s.findings">0</span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- COMPONENTS -->
+        <div x-show="tab==='components'">
+          <template x-if="!components.length"><div class="empty" x-text="t('no_components')"></div></template>
+          <div class="table-wrap" x-show="components.length">
+            <table class="bins">
+              <thead><tr>
+                <th x-text="t('th_component')"></th><th x-text="t('th_version')"></th>
+                <th x-text="t('th_binaries_col')"></th><th x-text="t('th_cves')"></th>
+              </tr></thead>
+              <tbody>
+                <template x-for="c in components" :key="c.name+'@'+c.version">
+                  <tr>
+                    <td x-text="c.name"></td>
+                    <td x-text="c.version"></td>
+                    <td :title="(c.binaries||[]).join('\n')" x-text="(c.binaries&&c.binaries.length)||0"></td>
+                    <td>
+                      <a href="#" x-show="c.cve_ids&&c.cve_ids.length"
+                         @click.prevent="goToFindings({vclass:'known_cve', q:c.name+'@'+c.version})"
+                         x-text="(c.cve_ids||[]).join(', ')"></a>
+                      <span x-show="!(c.cve_ids&&c.cve_ids.length)">—</span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- STRINGS -->
+        <div x-show="tab==='strings'">
+          <div class="filters">
+            <select x-model="stringsBinary">
+              <template x-for="b in binaries" :key="b.path">
+                <option :value="b.path" x-text="shortPath(b.path)+' ('+((b.strings&&b.strings.length)||0)+')'"></option>
+              </template>
+            </select>
+            <input type="text" x-model="stringsQuery" :placeholder="t('strings_search_placeholder')">
+            <span class="count" x-text="filteredStrings.length+' / '+currentBinaryStrings.length"></span>
+          </div>
+          <template x-if="!binaries.length"><div class="empty" x-text="t('no_binaries')"></div></template>
+          <template x-if="binaries.length && !filteredStrings.length"><div class="empty" x-text="t('no_strings_match')"></div></template>
+          <pre class="code" style="max-height:70vh" x-show="filteredStrings.length" x-text="stringsText"></pre>
+          <p class="meta" x-show="stringsTruncated" x-text="t('strings_truncated')"></p>
+        </div>
+
+        <!-- SENSITIVE STRINGS -->
+        <div x-show="tab==='sensitive'">
+          <p class="meta" style="margin-top:0">
+            <span x-text="t('kw_current_count').replace('{n}', sensitiveKeywords.length)"></span>
+            <button class="ghost sm" @click="toggleSensitiveDict()" x-text="t('kw_manage_btn')"></button>
+          </p>
+          <div class="filters">
+            <select x-model="sensitiveBinary" @change="computeSensitive()">
+              <option value="" x-text="t('filter_all_binaries')"></option>
+              <template x-for="b in binaries" :key="b.path">
+                <option :value="b.path" x-text="shortPath(b.path)"></option>
+              </template>
+            </select>
+            <span class="count" x-text="sensitiveResults.length"></span>
+          </div>
+          <template x-if="!binaries.length"><div class="empty" x-text="t('no_binaries')"></div></template>
+          <template x-if="binaries.length && !sensitiveResults.length"><div class="empty" x-text="t('no_sensitive_match')"></div></template>
+          <div class="table-wrap" x-show="sensitiveResults.length">
+            <table class="bins">
+              <thead><tr>
+                <th x-text="t('th_binary')"></th>
+                <th x-text="t('th_keyword')"></th>
+                <th x-text="t('th_string')"></th>
+              </tr></thead>
+              <tbody>
+                <template x-for="(r,idx) in sensitiveResults" :key="idx">
+                  <tr>
+                    <td class="path" :title="r.binary" x-text="shortPath(r.binary)"></td>
+                    <td><span class="chip warn" x-text="r.keyword"></span></td>
+                    <td class="path" x-text="r.text"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <p class="meta" x-show="sensitiveTruncated" x-text="t('sensitive_truncated')"></p>
         </div>
       </div>
     </template>
@@ -385,32 +1010,370 @@
 <script>
 const SEVS = ["critical","high","medium","low","info"];
 const SHORT = {critical:"crit",high:"high",medium:"med",low:"low",info:"info"};
+
+// UI-chrome translations only. Finding titles/descriptions/vuln_class/component/rule
+// come from the analysis engine (ifda/) and are left as generated (English), same as
+// technical acronyms (NX/RELRO/PIE/…) and internal pipeline stage names.
+const I18N = {
+  tagline:              { en: "IoT Firmware Deep Analysis",           zh: "IoT 固件深度分析" },
+  target_placeholder:   { en: "/path/to/binary or extracted rootfs",  zh: "二进制路径或已解包的固件目录" },
+  analyze:              { en: "Analyze",                              zh: "分析" },
+  uploading:            { en: "Uploading…",                           zh: "上传中…" },
+  upload_file:          { en: "⬆ Upload a file",                      zh: "⬆ 上传文件" },
+  upload_hint:          { en: "— stored server-side, then analyzed",  zh: "— 服务端存储后分析" },
+  decompile_label:      { en: "Decompile with Ghidra (slow, enriches findings with pseudocode)",
+                           zh: "使用 Ghidra 反编译(较慢,会为发现附加伪代码)" },
+  decompile_unavailable: { en: "Ghidra not found on server",          zh: "服务端未检测到 Ghidra" },
+  decompile_unavailable_hint: { en: "Set GHIDRA_HOME or install to /opt/ghidra on the server to enable this.",
+                                 zh: "在服务端设置 GHIDRA_HOME 或将 Ghidra 安装到 /opt/ghidra 即可启用。" },
+  no_jobs:              { en: "No jobs yet.",                         zh: "暂无任务。" },
+  cached:               { en: "cached",                               zh: "已缓存" },
+  chip_findings:        { en: "findings",                             zh: "个发现" },
+  chip_highcrit:        { en: "high/crit",                            zh: "高危/严重" },
+  select_job:           { en: "Submit or select a job to see results.", zh: "提交或选择一个任务以查看结果。" },
+  status_label:         { en: "Status:",                              zh: "状态:" },
+  tab_dashboard:        { en: "Dashboard",                             zh: "仪表盘" },
+  tab_findings:         { en: "Findings",                              zh: "发现" },
+  tab_binaries:         { en: "Binaries",                              zh: "二进制" },
+  export_json:          { en: "JSON",                                 zh: "JSON" },
+  export_md:            { en: "Markdown",                             zh: "Markdown" },
+  export_sbom:          { en: "SBOM",                                 zh: "SBOM" },
+  card_findings:        { en: "Findings",                              zh: "发现总数" },
+  card_critical:        { en: "Critical",                              zh: "严重" },
+  card_high:            { en: "High",                                  zh: "高危" },
+  card_binaries:        { en: "Binaries",                              zh: "二进制数" },
+  card_cves:            { en: "CVEs",                                 zh: "CVE 数" },
+  by_severity:          { en: "By severity",                          zh: "按严重度" },
+  by_vuln_class:        { en: "By vulnerability class",                zh: "按漏洞类别" },
+  filter_all_classes:   { en: "All classes",                          zh: "全部类别" },
+  filter_any_triage:    { en: "Any triage",                           zh: "全部分诊状态" },
+  triage_new:           { en: "new",                                  zh: "未处理" },
+  triage_confirmed:     { en: "confirmed",                            zh: "已确认" },
+  triage_false_positive:{ en: "false positive",                       zh: "误报" },
+  triage_accepted_risk: { en: "accepted risk",                        zh: "接受风险" },
+  search_placeholder:   { en: "search title/snippet/function…",       zh: "搜索标题/证据/函数名…" },
+  conf_label:           { en: "conf ≥",                                zh: "置信度 ≥" },
+  sort_severity:        { en: "sort: severity",                       zh: "排序:严重度" },
+  sort_confidence:      { en: "sort: confidence",                     zh: "排序:置信度" },
+  no_findings_match:    { en: "No findings match the filters.",       zh: "没有符合筛选条件的发现。" },
+  component_label:      { en: "component",                           zh: "组件" },
+  rule_label:           { en: "rule",                                 zh: "规则" },
+  id_label:             { en: "id",                                   zh: "ID" },
+  pseudocode_label:     { en: "Decompiled pseudocode (Ghidra)",       zh: "反编译伪代码(Ghidra)" },
+  triage_colon:         { en: "Triage:",                              zh: "分诊:" },
+  btn_confirm:          { en: "Confirm",                              zh: "确认" },
+  btn_false_positive:   { en: "False positive",                       zh: "误报" },
+  btn_accept_risk:      { en: "Accept risk",                          zh: "接受风险" },
+  btn_reset:            { en: "Reset",                                zh: "重置" },
+  th_binary:            { en: "Binary",                               zh: "二进制" },
+  th_arch:              { en: "Arch",                                 zh: "架构" },
+  th_libc:              { en: "libc",                                 zh: "libc" },
+  th_mitigations:       { en: "Mitigations",                          zh: "缓解措施" },
+  th_fns:               { en: "Fns",                                  zh: "函数数" },
+  th_warnings:          { en: "Warnings",                             zh: "警告" },
+  th_cves:              { en: "CVEs",                                 zh: "CVE" },
+  th_strings:           { en: "Strings",                              zh: "字符串数" },
+  tab_strings:          { en: "Strings",                              zh: "字符串" },
+  strings_search_placeholder: { en: "search extracted strings…",      zh: "搜索提取出的字符串…" },
+  no_binaries:          { en: "No binaries in this report.",          zh: "该报告中没有二进制。" },
+  tab_scripts:          { en: "Scripts",                              zh: "脚本" },
+  th_script:            { en: "Script",                               zh: "脚本" },
+  th_kind:              { en: "Kind",                                 zh: "类型" },
+  th_findings:          { en: "Findings",                             zh: "发现数" },
+  no_scripts:           { en: "No shell/PHP/Python/Lua scripts found in this target.",
+                           zh: "该目标中没有找到 shell/PHP/Python/Lua 脚本。" },
+  tab_components:       { en: "Components",                           zh: "组件" },
+  th_component:         { en: "Component",                            zh: "组件" },
+  th_version:           { en: "Version",                              zh: "版本" },
+  th_binaries_col:      { en: "Binaries",                             zh: "二进制数" },
+  no_components:        { en: "No known software components detected (the offline DB only recognizes a handful of banner strings — busybox/openssl/dropbear/uclibc/lighttpd).",
+                           zh: "未检测到已知软件组件(离线数据库目前只识别少数几种 banner 字符串:busybox/openssl/dropbear/uclibc/lighttpd)。" },
+  no_strings_match:     { en: "No strings match the filter.",         zh: "没有符合筛选条件的字符串。" },
+  strings_truncated:    { en: "Showing the first 2000 matches — narrow your search to see more precisely.",
+                           zh: "仅显示前 2000 条匹配结果——缩小搜索范围可看到更精确的结果。" },
+  tab_sensitive:        { en: "Sensitive",                             zh: "敏感字符串" },
+  kw_help:              { en: "Extracted strings are matched against this keyword dictionary (case-insensitive substring match). Add or remove keywords to tune the search — it's saved in this browser.",
+                           zh: "提取出的字符串会按下方关键词字典做匹配(不区分大小写的子串匹配)。可自行增减关键词——设置会保存在本浏览器中。" },
+  kw_add_placeholder:   { en: "add keyword…",                          zh: "添加关键词…" },
+  kw_add_btn:           { en: "Add",                                   zh: "添加" },
+  kw_reset_btn:         { en: "Reset to defaults",                     zh: "恢复默认" },
+  kw_count_label:       { en: "keywords in the dictionary",            zh: "个关键词" },
+  kw_current_count:     { en: "{n} keywords in the current dictionary.", zh: "当前字典共 {n} 个关键词。" },
+  kw_manage_btn:        { en: "Manage dictionary",                     zh: "管理字典" },
+  btn_sensitive_dict:   { en: "Sensitive dictionary",                  zh: "敏感字符串字典" },
+  filter_all_binaries:  { en: "All binaries",                          zh: "全部二进制" },
+  th_keyword:           { en: "Keyword",                               zh: "关键词" },
+  th_string:            { en: "String",                                zh: "字符串" },
+  no_sensitive_match:   { en: "No strings match the keyword dictionary.", zh: "没有字符串匹配关键词字典。" },
+  sensitive_truncated:  { en: "Showing the first 3000 matches — narrow the keyword list or pick a single binary.",
+                           zh: "仅显示前 3000 条匹配结果——缩小关键词列表或选择单个二进制可看到更精确的结果。" },
+  sev_critical:         { en: "critical",                             zh: "严重" },
+  sev_high:             { en: "high",                                 zh: "高危" },
+  sev_medium:           { en: "medium",                               zh: "中危" },
+  sev_low:              { en: "low",                                  zh: "低危" },
+  sev_info:             { en: "info",                                 zh: "提示" },
+  status_queued:        { en: "queued",                               zh: "排队中" },
+  status_running:       { en: "running",                              zh: "运行中" },
+  status_completed:     { en: "completed",                            zh: "已完成" },
+  status_failed:        { en: "failed",                               zh: "失败" },
+  status_paused:        { en: "paused",                               zh: "已暂停" },
+  status_cancelled:     { en: "stopped",                               zh: "已停止" },
+  btn_pause:            { en: "Pause",                                 zh: "暂停" },
+  btn_resume:           { en: "Resume",                                zh: "继续" },
+  btn_stop:             { en: "Stop",                                  zh: "停止" },
+  confirm_stop:         { en: "Stop this scan? It cannot be resumed — you'll need to submit it again.",
+                           zh: "确定要停止此扫描吗?停止后无法继续,需要重新提交任务。" },
+  process_log:          { en: "Process log",                          zh: "解析过程日志" },
+  no_log_yet:           { en: "No progress events yet.",              zh: "暂无进度事件。" },
+  loading_report:       { en: "Analysis finished — loading the report (large folders can take a moment)…",
+                           zh: "分析已完成,正在加载报告(文件夹较大时可能需要一点时间)…" },
+  waiting_to_start:     { en: "queued, waiting for a worker…",         zh: "排队中,等待分配 worker…" },
+  report_load_failed:   { en: "Failed to load the report",             zh: "报告加载失败" },
+  btn_retry:            { en: "Retry",                                 zh: "重试" },
+  btn_delete:           { en: "Delete",                                zh: "删除" },
+  confirm_delete:       { en: "Delete this scan from history? This also removes its saved report and cannot be undone.",
+                           zh: "确定要从历史记录中删除此次扫描吗?这会同时删除已保存的报告,且无法撤销。" },
+  select_all:           { en: "Select all",                            zh: "全选" },
+  btn_delete_selected:  { en: "Delete selected",                       zh: "删除选中" },
+  confirm_delete_multi: { en: "Delete the selected scans from history? This also removes their saved reports and cannot be undone.",
+                           zh: "确定要从历史记录中删除选中的扫描吗?这会同时删除已保存的报告,且无法撤销。" },
+  delete_partial_fail:  { en: "Some selected scans could not be deleted (still active).",
+                           zh: "部分选中的扫描无法删除(仍处于活动状态)。" },
+  actor_placeholder:    { en: "your name (for triage log)",         zh: "你的名字(记录分诊日志用)" },
+  actor_hint:           { en: "Attached to triage actions so the audit log shows who did what.",
+                           zh: "会附加到分诊操作上,让审计日志能看出是谁做的。" },
+  login_subtitle:       { en: "Sign in to continue",                 zh: "请登录后继续" },
+  login_username:       { en: "Username",                            zh: "用户名" },
+  login_password:       { en: "Password",                            zh: "密码" },
+  login_submit:         { en: "Sign in",                             zh: "登录" },
+  login_captcha:        { en: "Enter the digits shown",              zh: "输入图中的数字" },
+  captcha_refresh_hint: { en: "Click to get a new code",             zh: "看不清?点击换一张" },
+  btn_logout:           { en: "Sign out",                            zh: "退出登录" },
+  btn_change_password:  { en: "Change password",                     zh: "修改密码" },
+  user_center:          { en: "User center",                         zh: "用户中心" },
+  signed_in_as:         { en: "Signed in as",                        zh: "当前账号" },
+  change_password_title:{ en: "Change password",                     zh: "修改密码" },
+  change_password_hint:{ en: "Choose a new password for your account.", zh: "为你的账号设置一个新密码。" },
+  old_password:         { en: "Current password",                    zh: "当前密码" },
+  new_password:         { en: "New password (min 8 characters)",     zh: "新密码(至少 8 位)" },
+  confirm_new_password: { en: "Confirm new password",                zh: "确认新密码" },
+  change_password_submit:{ en: "Update password",                    zh: "更新密码" },
+  change_password_mismatch: { en: "New passwords don't match.",      zh: "两次输入的新密码不一致。" },
+  change_password_ok:   { en: "Password updated.",                   zh: "密码已更新。" },
+  btn_compare:          { en: "Compare scans",                       zh: "对比扫描" },
+  btn_vulndb:           { en: "CVE database",                        zh: "CVE 漏洞库" },
+  vulndb_hint:          { en: "What this tool correlates components against — independent of any scan: cve-bin-tool's broad NVD/OSV/RedHat/GitLab/Curl coverage (required dependency) plus a small curated offline fallback.",
+                           zh: "本工具用于匹配组件的知识库——与具体扫描无关:cve-bin-tool 提供的 NVD/OSV/RedHat/GitLab/Curl 广域覆盖(必需依赖),以及一个小型内置离线回退数据库。" },
+  vulndb_empty:         { en: "No entries in the vulnerability database.", zh: "漏洞数据库中没有条目。" },
+  vulndb_cvebin_yes:    { en: "cve-bin-tool: available",                  zh: "cve-bin-tool:已启用" },
+  vulndb_cvebin_no:     { en: "cve-bin-tool: not installed",               zh: "cve-bin-tool:未安装" },
+  vulndb_cvebin_components: { en: "components covered",                  zh: "个组件覆盖" },
+  vulndb_checkers_summary:  { en: "Show covered component checkers",      zh: "显示已覆盖的组件检测器列表" },
+  vulndb_checkers_filter:   { en: "Filter…",                              zh: "筛选…" },
+  vulndb_curated_heading:   { en: "Curated fallback database",            zh: "内置精选回退数据库" },
+  vulndb_cve_count_label:   { en: "CVE entries in the local synced database", zh: "本地已同步数据库中的 CVE 条目数" },
+  vulndb_cve_count_hint:    { en: "Too many to list individually (often 10,000s–100,000s per source) — matched against your scan's actual components instead of browsed here.",
+                              zh: "数量太多无法逐条列出(每个数据源常有数万到数十万条)——请通过实际扫描来匹配,而不是在此逐条浏览。" },
+  th_severity:          { en: "Severity",                            zh: "严重度" },
+  th_affected_versions: { en: "Affected versions",                   zh: "受影响版本" },
+  th_summary:           { en: "Summary",                             zh: "概述" },
+  loading:              { en: "Loading…",                            zh: "加载中…" },
+  compare_pick_a:       { en: "Baseline scan (A)…",                  zh: "选择基准扫描(A)…" },
+  compare_pick_b:       { en: "New scan (B)…",                       zh: "选择新扫描(B)…" },
+  btn_run_compare:      { en: "Compare",                             zh: "开始对比" },
+  comparing:            { en: "Loading both reports…",               zh: "正在加载两份报告…" },
+  compare_added:        { en: "New findings (in B, not in A)",       zh: "新增发现(B 有、A 没有)" },
+  compare_removed:      { en: "Fixed / removed findings (in A, not in B)",
+                           zh: "已修复/消失的发现(A 有、B 没有)" },
+  compare_common:       { en: "Unchanged (in both)",                 zh: "两次都有(未变化)" },
+  compare_none:         { en: "None.",                               zh: "无。" },
+  export_filtered_csv:  { en: "Export filtered (CSV)",                zh: "导出筛选结果(CSV)" },
+  export_filtered_json: { en: "Export filtered (JSON)",               zh: "导出筛选结果(JSON)" },
+  triage_history_label: { en: "Triage history",                      zh: "分诊记录" },
+  no_triage_history:    { en: "No triage changes yet.",              zh: "暂无分诊记录。" },
+};
+
+// Default sensitive-string keyword dictionary (IoT default-credential / weak-service
+// hunting). User-editable in the UI and persisted to localStorage. Extends the
+// original core list with terms drawn from EMBA's (github.com/e-m-b-a/emba)
+// config/*_files.cfg sensitive-file targets (ssh_files, pass_files, cert_files,
+// history_files) and its deep_key_search/password_regex signature set — EMBA
+// itself matches those by filename/regex rather than a keyword-substring list,
+// but the underlying artifact names (id_rsa, shadow, authorized_keys, ...) are
+// exactly the kind of substrings worth flagging when they show up embedded in
+// a binary's or script's extracted strings.
+const DEFAULT_SENSITIVE_KEYWORDS = [
+  // core weak-service / default-credential hunting
+  "telnet", "ssh", "ftp", "tftp", "root", "toor", "admin", "guest", "support",
+  "engineer", "supervisor", "backdoor", "debug", "password", "passwd", "pwd",
+  "secret", "private key", "private_key", "default", "enable",
+  // credential/key artifact names (EMBA ssh_files.cfg / pass_files.cfg / cert_files.cfg / history_files.cfg)
+  "shadow", "master.passwd", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+  "authorized_keys", "known_hosts", ".git-credentials", ".htpasswd",
+  "sshd_config", ".bash_history", ".mysql_history",
+  // embedded services/daemons commonly left with default/weak config
+  "dropbear", "uboot", "u-boot", "wpa_supplicant", "hostapd", "snmpd", "community",
+  // key=value style secret assignments
+  "api_key", "api_token", "access_token", "auth_token", "secret_key",
+  "shared_secret", "wifi_password", "wpa_passphrase",
+  // hardware/manufacturing debug backdoors
+  "jtag", "uart", "factory_test", "engineering_mode",
+];
+
 function app() {
   return {
     SEVS, SHORT,
     theme: localStorage.getItem("ifda-theme") || "midnight",
+    lang: localStorage.getItem("ifda-lang") || "en",
     jobs: [], selectedId: null, report: null, tab: "dashboard",
     target: "/bin/ls", uploading: false, sse: null,
+    decompile: false, ghidraAvailable: true,
+    deleteSelected: [],
+    authToken: localStorage.getItem("ifda-token") || "",
+    username: localStorage.getItem("ifda-username") || "", showUserMenu: false,
+    loginRequired: false, showLogin: false, loginUser: "", loginPass: "", loginError: "",
+    captchaId: "", captchaImg: "", captchaAnswer: "",
+    showChangePassword: false, oldPassword: "", newPassword: "", newPassword2: "", changePasswordError: "", changePasswordOk: false,
+    actor: localStorage.getItem("ifda-actor") || "",
+    compareMode: false, compareA: "", compareB: "", compareResult: null, comparing: false,
+    showVulnDB: true, vulnDB: null, vulnDBLoading: false, vulnDBCheckerFilter: "",
+    showSensitiveDict: false,
+    triageHistoryCache: {},
+    reportLoadError: "",
     f: { sev:{critical:true,high:true,medium:true,low:true,info:true},
          vclass:"", triage:"", q:"", minConf:0 },
     sort: "severity",
+    stringsBinary: "", stringsQuery: "",
+    sensitiveKeywords: (() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("ifda-sensitive-keywords"));
+        return Array.isArray(saved) && saved.length ? saved : DEFAULT_SENSITIVE_KEYWORDS.slice();
+      } catch (e) { return DEFAULT_SENSITIVE_KEYWORDS.slice(); }
+    })(),
+    newKeyword: "", sensitiveBinary: "", sensitiveResults: [],
 
     async init() {
       this.applyTheme();
-      await this.refreshJobs();
-      setInterval(() => { if (!this.sse) this.refreshJobs(); }, 3000);
+      this.applyLang();
+      try {
+        const h = await (await fetch("/healthz")).json();
+        this.ghidraAvailable = !!h.ghidra_available;
+        this.loginRequired = !!h.login_required;
+      } catch (e) { /* keep defaults; a job will surface the real error if it matters */ }
+      if (this.loginRequired && !this.authToken) {
+        this.showLogin = true;
+      } else {
+        await this.refreshJobs();
+        this.loadVulnDB(); // default landing view (nothing selected yet) is the CVE database
+      }
+      setInterval(() => { if (!this.sse && !this.showLogin) this.refreshJobs(); }, 3000);
     },
+    // Wraps fetch() with the session token (if logged in). A 401 means the
+    // session is missing/expired: drop it and show the login screen instead
+    // of failing silently — the user re-does whatever they clicked once
+    // logged back in, which is simpler than queuing/replaying the request.
+    async apiFetch(url, opts = {}) {
+      opts.headers = Object.assign({}, opts.headers);
+      if (this.authToken) opts.headers["Authorization"] = "Bearer " + this.authToken;
+      const r = await fetch(url, opts);
+      if (r.status === 401 && this.loginRequired) {
+        this.authToken = "";
+        localStorage.removeItem("ifda-token");
+        this.showLogin = true;
+      }
+      return r;
+    },
+    async refreshCaptcha() {
+      try {
+        const r = await fetch("/api/captcha");
+        const j = await r.json();
+        this.captchaId = j.id; this.captchaImg = j.image; this.captchaAnswer = "";
+      } catch (e) { this.captchaImg = ""; }
+    },
+    async doLogin() {
+      this.loginError = "";
+      try {
+        const r = await fetch("/api/login", {method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({
+            username: this.loginUser, password: this.loginPass,
+            captcha_id: this.captchaId, captcha_answer: this.captchaAnswer,
+          })});
+        const j = await r.json();
+        if (!r.ok) {
+          this.loginError = j.error || "login failed";
+          await this.refreshCaptcha(); // captcha is one-time-use; get a fresh one after any failure
+          return;
+        }
+        this.authToken = j.session;
+        localStorage.setItem("ifda-token", this.authToken);
+        this.username = j.username || this.loginUser;
+        localStorage.setItem("ifda-username", this.username);
+        this.loginPass = ""; this.showLogin = false;
+        await this.refreshJobs();
+        this.loadVulnDB();
+      } catch (e) { this.loginError = "network error"; }
+    },
+    async doLogout() {
+      try {
+        await fetch("/api/logout", {method:"POST", headers:{"Authorization":"Bearer "+this.authToken}});
+      } catch (e) {}
+      this.authToken = ""; localStorage.removeItem("ifda-token");
+      this.username = ""; localStorage.removeItem("ifda-username");
+      this.showUserMenu = false;
+      this.jobs = []; this.report = null; this.selectedId = null; this.closeSSE();
+      this.showLogin = this.loginRequired;
+    },
+    openChangePassword() {
+      this.oldPassword = ""; this.newPassword = ""; this.newPassword2 = "";
+      this.changePasswordError = ""; this.changePasswordOk = false;
+      this.showChangePassword = true;
+    },
+    async doChangePassword() {
+      this.changePasswordError = ""; this.changePasswordOk = false;
+      if (this.newPassword !== this.newPassword2) {
+        this.changePasswordError = this.t("change_password_mismatch");
+        return;
+      }
+      try {
+        const r = await this.apiFetch("/api/change-password", {method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({old_password: this.oldPassword, new_password: this.newPassword})});
+        const j = await r.json();
+        if (!r.ok) { this.changePasswordError = j.error || "failed"; return; }
+        this.changePasswordOk = true;
+        this.oldPassword = ""; this.newPassword = ""; this.newPassword2 = "";
+        setTimeout(() => { this.showChangePassword = false; }, 1200);
+      } catch (e) { this.changePasswordError = "network error"; }
+    },
+    // Appends ?token= for contexts that can't set a header (EventSource, a
+    // plain <a href> download link).
+    tokenParam(sep) { return this.authToken ? `${sep}token=${encodeURIComponent(this.authToken)}` : ""; },
     applyTheme() {
       document.documentElement.setAttribute("data-theme", this.theme);
       localStorage.setItem("ifda-theme", this.theme);
     },
+    applyLang() {
+      document.documentElement.lang = this.lang === "zh" ? "zh-CN" : "en";
+      localStorage.setItem("ifda-lang", this.lang);
+    },
+    t(key) { const e = I18N[key]; return e ? (e[this.lang] || e.en) : key; },
+    tSev(s) { return this.t("sev_" + s); },
+    tTriage(s) { return this.t("triage_" + (s || "new")); },
+    tStatus(s) { return this.t("status_" + s); },
+    summaryText() {
+      const b = (this.report && this.report.binaries ? this.report.binaries.length : 0);
+      const n = this.findings.length;
+      return this.lang === "zh" ? `${b} 个二进制 · ${n} 个发现` : `${b} binaries · ${n} findings`;
+    },
     async refreshJobs() {
-      try { this.jobs = await (await fetch("/api/jobs")).json(); } catch(e){}
+      try { this.jobs = await (await this.apiFetch("/api/jobs")).json(); } catch(e){}
     },
     async submit() {
       const t = (this.target||"").trim(); if (!t) return;
-      const r = await fetch("/api/jobs", {method:"POST",
-        headers:{"Content-Type":"application/json"}, body:JSON.stringify({target:t})});
+      const r = await this.apiFetch("/api/jobs", {method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({target:t, decompile: this.ghidraAvailable && this.decompile})});
       const j = await r.json();
       if (!r.ok) { alert(j.error||"submit failed"); return; }
       await this.refreshJobs(); this.select(j.id);
@@ -420,19 +1383,20 @@ function app() {
       this.uploading = true;
       try {
         const fd = new FormData(); fd.append("file", file);
-        const r = await fetch("/api/upload", {method:"POST", body:fd});
+        const r = await this.apiFetch("/api/upload", {method:"POST", body:fd});
         const j = await r.json();
         if (!r.ok) { alert(j.error||"upload failed"); return; }
         this.target = j.target; await this.submit();
       } finally { this.uploading = false; ev.target.value = ""; }
     },
     select(id) {
+      this.compareMode = false; this.showVulnDB = false; this.showSensitiveDict = false;
       this.selectedId = id; this.report = null; this.tab = "dashboard";
       if (this.sse) { this.sse.close(); this.sse = null; }
       const job = this.jobs.find(x => x.id === id);
       if (job && job.status === "completed") { this.loadReport(id); return; }
       if (job && job.status === "failed") return;
-      this.sse = new EventSource(`/api/jobs/${id}/events`);
+      this.sse = new EventSource(`/api/jobs/${id}/events${this.tokenParam("?")}`);
       this.sse.onmessage = (e) => {
         const j = JSON.parse(e.data);
         const idx = this.jobs.findIndex(x => x.id === j.id);
@@ -444,13 +1408,43 @@ function app() {
     },
     closeSSE() { if (this.sse) { this.sse.close(); this.sse = null; } },
     async loadReport(id) {
-      try { const r = await fetch(`/api/jobs/${id}/report`); if (r.ok) this.report = await r.json(); }
-      catch(e){}
+      this.reportLoadError = "";
+      try {
+        const r = await this.apiFetch(`/api/jobs/${id}/report`);
+        if (r.ok) {
+          this.report = await r.json();
+          // Filters/selections (severity toggles, vuln-class, the Sensitive
+          // tab's per-binary picker, the Strings tab's binary picker) are
+          // scoped to whichever report was loaded when they were set. Left
+          // alone across a job switch, a stale severity-only filter (e.g.
+          // from an earlier goToFindings({sevOnly:'high'}) drill-down) or a
+          // sensitiveBinary/stringsBinary path that doesn't exist in the new
+          // report silently zeroes out findings/results with no error —
+          // exactly the "numbers don't show" symptom. Reset/recompute them
+          // here, once, for every report load rather than only lazily when
+          // each tab happens to be clicked.
+          this.resetFilters();
+          this.sensitiveBinary = "";
+          this.computeSensitive();
+          this.onStringsTab();
+          return;
+        }
+        const j = await r.json().catch(() => ({}));
+        this.reportLoadError = j.error || `HTTP ${r.status}`;
+      } catch (e) {
+        this.reportLoadError = String(e);
+      }
+    },
+    resetFilters() {
+      this.f = { sev:{critical:true,high:true,medium:true,low:true,info:true},
+                 vclass:"", triage:"", q:"", minConf:0 };
     },
 
     get selJob() { return this.jobs.find(x => x.id === this.selectedId); },
     get findings() { return this.report ? (this.report.findings||[]) : []; },
     get binaries() { return this.report ? (this.report.binaries||[]) : []; },
+    get scripts() { return this.report ? (this.report.scripts||[]) : []; },
+    get components() { return this.report ? (this.report.components||[]) : []; },
     get vclasses() { return [...new Set(this.findings.map(f => f.vuln_class))].sort(); },
     get cveCount() { return new Set(this.findings.flatMap(f => f.cve_ids||[])).size; },
     get classCounts() {
@@ -468,8 +1462,9 @@ function app() {
         if (this.f.triage && (f.triage||"new") !== this.f.triage) return false;
         if (f.confidence < this.f.minConf) return false;
         if (q) {
-          const hay = (f.title+" "+f.description+" "+f.vuln_class+" "+
-            (f.evidence||[]).map(e=>(e.snippet||"")+" "+(e.function||"")).join(" ")).toLowerCase();
+          const hay = (f.title+" "+f.description+" "+f.vuln_class+" "+f.component+" "+
+            (f.cve_ids||[]).join(" ")+" "+
+            (f.evidence||[]).map(e=>(e.binary||"")+" "+(e.snippet||"")+" "+(e.function||"")).join(" ")).toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
@@ -480,17 +1475,295 @@ function app() {
       return out;
     },
     async setTriage(f, state) {
-      const r = await fetch(`/api/jobs/${this.selectedId}/triage`, {method:"POST",
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/triage`, {method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({finding_id:f.id, state})});
-      if (r.ok) { f.triage = state; }
+        body:JSON.stringify({finding_id:f.id, state, actor:this.actor})});
+      if (r.ok) { f.triage = state; delete this.triageHistoryCache[f.id]; }
       else { const j = await r.json(); alert(j.error||"triage failed"); }
     },
-    exportURL(fmt) { return `/api/jobs/${this.selectedId}/report?format=${fmt}&download=1`; },
+    exportURL(fmt) { return `/api/jobs/${this.selectedId}/report?format=${fmt}&download=1${this.tokenParam("&")}`; },
+    downloadBlob(content, mime, filename) {
+      const blob = new Blob([content], {type: mime});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    },
+    exportFilteredJSON() {
+      this.downloadBlob(JSON.stringify(this.filtered, null, 2), "application/json",
+        `ifda-${this.selectedId}-filtered.json`);
+    },
+    exportFilteredCSV() {
+      const cols = ["id","severity","confidence","vuln_class","title","component","rule","triage","cve_ids","description"];
+      const esc = v => `"${String(v==null?"":v).replace(/"/g,'""')}"`;
+      const rows = [cols.join(",")];
+      for (const f of this.filtered) {
+        rows.push(cols.map(c => {
+          if (c === "cve_ids") return esc((f.cve_ids||[]).join("; "));
+          return esc(f[c]);
+        }).join(","));
+      }
+      this.downloadBlob(rows.join("\r\n"), "text/csv", `ifda-${this.selectedId}-filtered.csv`);
+    },
+    async triageHistoryFor(findingId) {
+      if (this.triageHistoryCache[findingId]) return this.triageHistoryCache[findingId];
+      try {
+        const r = await this.apiFetch(`/api/triage/history?finding_id=${encodeURIComponent(findingId)}`);
+        const hist = r.ok ? await r.json() : [];
+        this.triageHistoryCache[findingId] = hist;
+        return hist;
+      } catch (e) { return []; }
+    },
 
+    async jobControl(id, action) {
+      const r = await this.apiFetch(`/api/jobs/${id}/${action}`, {method:"POST"});
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(body.error || `${action} failed`); return; }
+      const idx = this.jobs.findIndex(x => x.id === id);
+      if (idx >= 0) this.jobs[idx] = body;
+    },
+    pauseJob(id) { this.jobControl(id, "pause"); },
+    resumeJob(id) { this.jobControl(id, "resume"); },
+    stopJob(id) { if (confirm(this.t("confirm_stop"))) this.jobControl(id, "stop"); },
+    async deleteJob(id) {
+      if (!confirm(this.t("confirm_delete"))) return;
+      const r = await this.apiFetch(`/api/jobs/${id}`, {method:"DELETE"});
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(body.error || "delete failed"); return; }
+      this.jobs = this.jobs.filter(x => x.id !== id);
+      if (this.selectedId === id) {
+        this.selectedId = null; this.report = null; this.closeSSE();
+      }
+      const i = this.deleteSelected.indexOf(id);
+      if (i >= 0) this.deleteSelected.splice(i, 1);
+    },
+
+    get deletableJobs() {
+      return this.jobs.filter(j => ["completed","failed","cancelled"].includes(j.status));
+    },
+
+    get completedJobs() { return this.jobs.filter(j => j.status === "completed"); },
+    toggleCompare() {
+      this.compareMode = !this.compareMode;
+      if (this.compareMode) { this.closeSSE(); this.compareResult = null; this.showVulnDB = false; this.showSensitiveDict = false; }
+    },
+    async loadVulnDB() {
+      if (this.vulnDB) return; // cached — it's static reference data, not per-scan
+      this.vulnDBLoading = true;
+      try {
+        const r = await this.apiFetch("/api/vulndb");
+        this.vulnDB = r.ok ? await r.json() : {};
+      } catch (e) { this.vulnDB = {}; }
+      finally { this.vulnDBLoading = false; }
+    },
+    toggleVulnDB() {
+      this.showVulnDB = !this.showVulnDB;
+      if (!this.showVulnDB) return;
+      this.closeSSE(); this.compareMode = false; this.showSensitiveDict = false;
+      this.loadVulnDB();
+    },
+    // Standalone dictionary management (FR-INV-4), independent of any scan —
+    // previously the add/remove/reset controls only existed inside a loaded
+    // report's Sensitive tab, so there was no way to curate the keyword list
+    // without first running a scan.
+    toggleSensitiveDict() {
+      this.showSensitiveDict = !this.showSensitiveDict;
+      if (!this.showSensitiveDict) return;
+      this.closeSSE(); this.compareMode = false; this.showVulnDB = false;
+    },
+    get vulnDBRows() {
+      const rows = [];
+      for (const [component, entries] of Object.entries(this.vulnDB?.curated || {})) {
+        for (const e of (entries || [])) {
+          const versionText = e.versions ? e.versions.join(", ")
+            : (e.version_lt ? `< ${e.version_lt}` : "");
+          rows.push({component, cve: e.cve, severity: e.severity, summary: e.summary, versionText});
+        }
+      }
+      rows.sort((a, b) => a.component.localeCompare(b.component) || a.cve.localeCompare(b.cve));
+      return rows;
+    },
+    get vulnDBCoverage() { return this.vulnDB?.cve_bin_tool || null; },
+    get filteredCheckers() {
+      const checkers = this.vulnDBCoverage?.checkers || [];
+      const q = this.vulnDBCheckerFilter.trim().toLowerCase();
+      return q ? checkers.filter(n => n.includes(q)) : checkers;
+    },
+    async runCompare() {
+      if (!this.compareA || !this.compareB) return;
+      this.comparing = true; this.compareResult = null;
+      try {
+        const [ra, rb] = await Promise.all([
+          this.apiFetch(`/api/jobs/${this.compareA}/report`).then(r => r.json()),
+          this.apiFetch(`/api/jobs/${this.compareB}/report`).then(r => r.json()),
+        ]);
+        const aIds = new Set((ra.findings||[]).map(f => f.id));
+        const bIds = new Set((rb.findings||[]).map(f => f.id));
+        this.compareResult = {
+          added: (rb.findings||[]).filter(f => !aIds.has(f.id)),
+          removed: (ra.findings||[]).filter(f => !bIds.has(f.id)),
+          common: (rb.findings||[]).filter(f => aIds.has(f.id)),
+        };
+      } catch (e) {
+        alert("compare failed: " + e);
+      } finally {
+        this.comparing = false;
+      }
+    },
+    toggleDeleteSelect(id) {
+      const i = this.deleteSelected.indexOf(id);
+      if (i >= 0) this.deleteSelected.splice(i, 1);
+      else this.deleteSelected.push(id);
+    },
+    selectAllForDelete() {
+      const all = this.deletableJobs.map(j => j.id);
+      this.deleteSelected = (this.deleteSelected.length === all.length) ? [] : all;
+    },
+    async deleteSelectedJobs() {
+      if (!this.deleteSelected.length) return;
+      if (!confirm(`${this.t("confirm_delete_multi")} (${this.deleteSelected.length})`)) return;
+      const ids = this.deleteSelected.slice();
+      const r = await this.apiFetch("/api/jobs/batch-delete", {method:"POST",
+        headers:{"Content-Type":"application/json"}, body: JSON.stringify({ids})});
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(body.error || "delete failed"); return; }
+      const results = body.results || {};
+      const deletedIds = new Set(ids.filter(id => results[id] === "deleted"));
+      this.jobs = this.jobs.filter(j => !deletedIds.has(j.id));
+      if (deletedIds.has(this.selectedId)) {
+        this.selectedId = null; this.report = null; this.closeSSE();
+      }
+      this.deleteSelected = this.deleteSelected.filter(id => !deletedIds.has(id));
+      if (deletedIds.size < ids.length) alert(this.t("delete_partial_fail"));
+    },
+
+    onStringsTab() {
+      if (!this.binaries.some(b => b.path === this.stringsBinary)) {
+        this.stringsBinary = this.binaries[0] ? this.binaries[0].path : "";
+      }
+    },
+    get totalStrings() {
+      return this.binaries.reduce((n,b) => n + ((b.strings && b.strings.length) || 0), 0);
+    },
+    get currentBinaryStrings() {
+      const b = this.binaries.find(x => x.path === this.stringsBinary);
+      return (b && b.strings) || [];
+    },
+    get filteredStrings() {
+      const q = (this.stringsQuery||"").toLowerCase();
+      if (!q) return this.currentBinaryStrings;
+      return this.currentBinaryStrings.filter(s => s.toLowerCase().includes(q));
+    },
+    get stringsText() { return this.filteredStrings.slice(0, 2000).join("\n"); },
+    get stringsTruncated() { return this.filteredStrings.length > 2000; },
+
+    persistKeywords() {
+      localStorage.setItem("ifda-sensitive-keywords", JSON.stringify(this.sensitiveKeywords));
+    },
+    addKeyword() {
+      const k = (this.newKeyword||"").trim();
+      this.newKeyword = "";
+      if (!k) return;
+      if (!this.sensitiveKeywords.some(x => x.toLowerCase() === k.toLowerCase())) {
+        this.sensitiveKeywords.push(k);
+        this.persistKeywords();
+      }
+      this.computeSensitive();
+    },
+    removeKeyword(k) {
+      this.sensitiveKeywords = this.sensitiveKeywords.filter(x => x !== k);
+      this.persistKeywords();
+      this.computeSensitive();
+    },
+    resetKeywords() {
+      this.sensitiveKeywords = DEFAULT_SENSITIVE_KEYWORDS.slice();
+      this.persistKeywords();
+      this.computeSensitive();
+    },
+    computeSensitive() {
+      const kws = this.sensitiveKeywords.map(k => k.toLowerCase()).filter(Boolean);
+      const cap = 3000;
+      const out = [];
+      outer:
+      for (const b of this.binaries) {
+        if (this.sensitiveBinary && b.path !== this.sensitiveBinary) continue;
+        for (const s of (b.strings || [])) {
+          const low = s.toLowerCase();
+          for (const k of kws) {
+            if (low.includes(k)) {
+              out.push({ binary: b.path, keyword: k, text: s.length > 200 ? s.slice(0, 200)+"…" : s });
+              if (out.length >= cap) break outer;
+              break;
+            }
+          }
+        }
+      }
+      this.sensitiveResults = out;
+    },
+    get sensitiveTruncated() { return this.sensitiveResults.length >= 3000; },
+
+    // Jump to Findings from a dashboard number, pre-filtered so the drill-down
+    // actually shows what was clicked (a fresh filter set, not whatever the
+    // user had left over from a previous visit to the tab).
+    goToFindings(opts = {}) {
+      this.tab = "findings";
+      this.resetFilters();
+      if (opts.sevOnly) {
+        this.f.sev = {critical:false,high:false,medium:false,low:false,info:false};
+        this.f.sev[opts.sevOnly] = true;
+      }
+      this.f.vclass = opts.vclass || "";
+      this.f.q = opts.q || "";
+    },
+    // CVE findings aren't matched by vuln_class alone in a useful way for a
+    // per-binary drill-down, so this stays a thin wrapper: known_cve class,
+    // optionally narrowed to one binary via the text search over evidence.
+    goToCves(binaryPath) {
+      this.goToFindings({ vclass: "known_cve", q: binaryPath || "" });
+    },
     shortPath(p) { const parts=p.split("/"); return parts.length>3 ? ".../"+parts.slice(-2).join("/") : p; },
+    // Splits a scan target into a bold "name" (last path segment) + a muted
+    // "dir" (everything before it), so two jobs against similarly-long paths
+    // (a common case when re-scanning sibling directories of one firmware
+    // extraction) are distinguishable at a glance instead of both truncating
+    // to an identical "...long/common/prefix" ellipsis.
+    targetName(p) {
+      if (!p) return "";
+      const parts = p.replace(/\/+$/, "").split("/");
+      return parts[parts.length - 1] || p;
+    },
+    targetDir(p) {
+      if (!p) return "";
+      const parts = p.replace(/\/+$/, "").split("/");
+      parts.pop();
+      return parts.join("/") || "/";
+    },
+    timeAgo(iso) {
+      if (!iso) return "";
+      const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+      const zh = this.lang === "zh";
+      if (s < 60) return zh ? "刚刚" : "just now";
+      const m = Math.floor(s / 60);
+      if (m < 60) return zh ? `${m} 分钟前` : `${m}m ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return zh ? `${h} 小时前` : `${h}h ago`;
+      const d = Math.floor(h / 24);
+      if (d < 30) return zh ? `${d} 天前` : `${d}d ago`;
+      return new Date(iso).toLocaleDateString();
+    },
+    logTime(t) {
+      if (!t) return "";
+      const d = new Date(t);
+      return d.toLocaleTimeString(undefined, {hour12:false}) + "." + String(d.getMilliseconds()).padStart(3,"0");
+    },
     cvesFor(path) {
-      return [...new Set(this.findings.filter(f=>f.component===path).flatMap(f=>f.cve_ids||[]))].join(", ");
+      // CVE findings set component to "pkg@version" (SBOM identity), not the
+      // binary path — component never equals path for them. The binary link
+      // is only in evidence[].binary, so match there instead.
+      return [...new Set(this.findings
+        .filter(f => (f.evidence||[]).some(e => e.binary === path))
+        .flatMap(f => f.cve_ids||[]))].join(", ");
     },
     mitChips(m) {
       if (!m) return "—";

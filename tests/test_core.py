@@ -425,6 +425,8 @@ def test_triage_persistence(tmp_path):
     info = BinaryInfo(path="b", sha256="x")
     info.strings = ["OpenSSL 1.0.1f"]
     findings = correlate_cves(info)
+    assert len(findings) >= 2  # OpenSSL 1.0.1f matches multiple CVEs; ids must differ
+    assert len({f.id for f in findings}) == len(findings)
     fid = findings[0].id
 
     store_path = tmp_path / "triage.json"
@@ -435,7 +437,11 @@ def test_triage_persistence(tmp_path):
     store2 = TriageStore(str(store_path))
     store2.apply(findings)
     assert findings[0].triage is TriageState.FALSE_POSITIVE
-    assert store2.active(findings) == []
+    # Only the triaged finding is muted; unrelated CVEs on the same component
+    # must not be silently suppressed by a shared fingerprint (the bug this
+    # guards against).
+    assert findings[1].triage is TriageState.NEW
+    assert store2.active(findings) == findings[1:]
 
 
 # A captured Ghidra post-script output, so the parser + enrichment are tested
@@ -469,7 +475,7 @@ def test_decompile_enrichment_maps_to_findings(monkeypatch):
                 severity=Severity.HIGH, confidence=0.8, component="/fw/bin",
                 rule="r", evidence=[Evidence(binary="/fw/bin", function="handle")])
     monkeypatch.setattr(dc, "decompile",
-                        lambda path, funcs, timeout=900: dc._parse_output(_GHIDRA_FIXTURE))
+                        lambda path, funcs, timeout=300, analysis_timeout=120: dc._parse_output(_GHIDRA_FIXTURE))
     n = dc.enrich_findings("/fw/bin", [f])
     assert n == 1
     assert "system(local_58)" in f.pseudocode
@@ -503,3 +509,92 @@ def test_decompile_live(tmp_path):
     res = decompile(str(binp), ["handle"])
     assert "handle" in res
     assert "strcpy" in res["handle"]["pseudocode"]
+
+
+def test_cve_bin_tool_scan_parses_entries(monkeypatch):
+    """Fast, deterministic: exercises scan_target's entry parsing (severity
+    mapping, remarks filtering, component/Finding construction) without
+    invoking the real cve-bin-tool binary or its multi-GB CVE database."""
+    import ifda.vuln.cve_bin_tool as cbt
+    from ifda.model import Severity
+
+    monkeypatch.setattr(cbt, "cve_bin_tool_available", lambda: True)
+    fixture = [
+        {"vendor": "gnu", "product": "wget", "version": "1.20.3", "location": "/fw/bin/wget",
+         "cve_number": "CVE-2019-5953", "severity": "HIGH", "remarks": "NewFound",
+         "description": "buffer overflow"},
+        {"vendor": "openssl", "product": "openssl", "version": "1.0.1f", "location": "/fw/lib/libssl.so",
+         "cve_number": "CVE-2014-0160", "severity": "CRITICAL", "remarks": "Confirmed"},
+        {"vendor": "x", "product": "x", "version": "1.0", "location": "/fw/x",
+         "cve_number": "CVE-9999-0001", "severity": "LOW", "remarks": "FalsePositive"},
+    ]
+    monkeypatch.setattr(cbt, "_run", lambda target, timeout: fixture)
+
+    findings, comps = cbt.scan_target("/fw")
+
+    cve_ids = {f.cve_ids[0] for f in findings}
+    assert cve_ids == {"CVE-2019-5953", "CVE-2014-0160"}  # FalsePositive filtered out
+    wget = next(f for f in findings if f.cve_ids[0] == "CVE-2019-5953")
+    assert wget.severity == Severity.HIGH
+    assert wget.component == "wget@1.20.3"
+    # The FalsePositive-only "x" entry is filtered before it ever becomes a
+    # component, not just before it becomes a finding.
+    names = {(c.name, c.version) for c in comps}
+    assert names == {("wget", "1.20.3"), ("openssl", "1.0.1f")}
+
+
+def test_iter_binaries_skips_special_files(tmp_path, monkeypatch):
+    """Real firmware trees carry device nodes (e.g. dev/console), FIFOs, and
+    sockets. is_elf() opens+reads its argument unconditionally; opening a
+    character device like /dev/console with no controlling terminal blocks
+    forever on read(), silently wedging the whole scan at "enumerating
+    binaries" with zero progress. iter_binaries must filter these out
+    *before* ever calling is_elf() on them — is_elf is stubbed (not
+    delegated to the real implementation) so this test can't itself hang if
+    that guard regresses."""
+    import ifda.pipeline as pipeline
+
+    (tmp_path / "bin").mkdir()
+    real_bin = tmp_path / "bin" / "busybox"
+    real_bin.write_bytes(b"\x7fELF" + b"\x00" * 60)
+    fifo_path = tmp_path / "console"
+    os.mkfifo(fifo_path)
+
+    calls = []
+
+    def fake_is_elf(path):
+        calls.append(path)
+        return path == str(real_bin)
+
+    monkeypatch.setattr(pipeline, "is_elf", fake_is_elf)
+
+    found = list(pipeline.iter_binaries(str(tmp_path)))
+    assert str(fifo_path) not in calls
+    assert found == [str(real_bin)]
+
+
+def test_cve_bin_tool_degrades_when_missing():
+    """NFR-USE-1: missing cve-bin-tool means empty results, not a crash —
+    the pipeline surfaces this via a warning (see analyze()) rather than
+    silently pretending coverage is unaffected."""
+    from ifda.vuln.cve_bin_tool import scan_target
+
+    findings, comps = scan_target("/fw")
+    assert findings == [] and comps == []
+
+
+@pytest.mark.skipif(
+    os.environ.get("IFDA_CVE_BIN_TOOL_TEST") != "1",
+    reason="live cve-bin-tool scan needs its local CVE database; set IFDA_CVE_BIN_TOOL_TEST=1 to run",
+)
+def test_cve_bin_tool_live(tmp_path):
+    """Opt-in: actually invoke cve-bin-tool end to end (FR-VUL-1 broad coverage)."""
+    import shutil as _shutil
+
+    from ifda.vuln.cve_bin_tool import cve_bin_tool_available, scan_target
+
+    if _shutil.which("cve-bin-tool") is None:
+        pytest.skip("cve-bin-tool not installed")
+    assert cve_bin_tool_available() is True
+    findings, comps = scan_target(str(tmp_path), timeout=600)
+    assert isinstance(findings, list) and isinstance(comps, list)

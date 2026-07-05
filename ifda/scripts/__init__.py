@@ -5,7 +5,7 @@ package analyzes scripts the way EMBA's S20-series modules do, starting with
 shell (the dominant case); Lua/PHP/Python analyzers slot in as sibling modules.
 """
 
-from .shell import scan_scripts
-from .langs import scan_lang_scripts
+from .shell import scan_scripts, list_scripts
+from .langs import scan_lang_scripts, list_lang_scripts
 
-__all__ = ["scan_scripts", "scan_lang_scripts"]
+__all__ = ["scan_scripts", "scan_lang_scripts", "list_scripts", "list_lang_scripts"]

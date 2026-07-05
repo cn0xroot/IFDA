@@ -44,7 +44,7 @@ def extract_sbom(info: BinaryInfo) -> list[Component]:
     return list(comps.values())
 
 
-def _load_db() -> dict:
+def load_db() -> dict:
     raw = files("ifda.data").joinpath("vuln_db.json").read_text()
     db = json.loads(raw)
     db.pop("_meta", None)
@@ -69,7 +69,7 @@ def _vulnerable(version: str, entry: dict) -> bool:
 
 
 def correlate_cves(info: BinaryInfo, db: dict | None = None) -> list[Finding]:
-    db = db if db is not None else _load_db()
+    db = db if db is not None else load_db()
     findings: list[Finding] = []
     for comp in extract_sbom(info):
         for entry in db.get(comp.name, []):

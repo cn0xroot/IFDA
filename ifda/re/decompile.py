@@ -1,10 +1,21 @@
 """FR-RE-2: decompiled pseudocode by wrapping Ghidra headless.
 
-Decompilation is an optional, heavyweight enrichment: Ghidra auto-analysis plus
-the decompiler is slow (tens of seconds of JVM startup + analysis per binary), so
-it is opt-in (`analyze(..., decompile=True)` / `--decompile`) and used narrowly —
-we decompile only the functions a finding already points at, to give the analyst
-C-like pseudocode next to the evidence.
+Decompilation is an optional, heavyweight enrichment: it is opt-in
+(`analyze(..., decompile=True)` / `--decompile`) and used narrowly — we only
+ever ask the post-script (ghidra_scripts/ifda_decompile.py) to decompile the
+specific functions a finding already points at.
+
+The real cost is Ghidra's *default auto-analysis* on `-import`, which walks the
+whole binary (reference/data-type/switch analyzers, ...) before our post-script
+ever runs — for a large real-world firmware binary (thousands of functions,
+heavy C++ template instantiation) that can be many minutes, not the "tens of
+seconds" a small test binary sees. Two bounds keep one file from stalling a
+whole job: `-analysisTimeoutPerFile` caps Ghidra's *own* analysis phase (it
+still runs the post-script afterward with whatever got recovered — ELF symbol
+tables mean function boundaries are typically found in the first, cheapest
+analyzer pass, so a capped analysis usually still finds our target functions);
+`timeout` is the outer subprocess kill as a last resort if Ghidra itself hangs.
+pipeline.py additionally runs this across binaries in parallel.
 
 If Ghidra is not installed the wrapper degrades gracefully (returns nothing,
 records a warning) per NFR-USE-1; the rest of the pipeline is unaffected.
@@ -61,8 +72,16 @@ def _parse_output(data: str) -> dict[str, dict]:
     return out
 
 
+# Ghidra's own analysis-phase budget per file. Kept well under `timeout` so
+# Ghidra has room to still run the post-script (with whatever analysis
+# completed) instead of the outer subprocess kill discarding everything.
+_DEFAULT_ANALYSIS_TIMEOUT = 120
+_DEFAULT_TIMEOUT = 300
+
+
 def decompile(path: str, functions: list[str] | None = None,
-              timeout: int = 900) -> dict[str, dict]:
+              timeout: int = _DEFAULT_TIMEOUT,
+              analysis_timeout: int = _DEFAULT_ANALYSIS_TIMEOUT) -> dict[str, dict]:
     """Decompile a binary (optionally only `functions`) to pseudocode.
 
     Returns {function_name: {address, signature, pseudocode}}. Empty dict if
@@ -80,6 +99,7 @@ def decompile(path: str, functions: list[str] | None = None,
         cmd = [
             headless, proj, "ifda_proj",
             "-import", os.path.abspath(path),
+            "-analysisTimeoutPerFile", str(analysis_timeout),
             "-scriptPath", _SCRIPT_DIR,
             "-postScript", _SCRIPT_NAME, out_file, func_arg,
             "-deleteProject",
@@ -99,7 +119,9 @@ def decompile(path: str, functions: list[str] | None = None,
         shutil.rmtree(proj, ignore_errors=True)
 
 
-def enrich_findings(binary_path: str, findings: list, timeout: int = 900) -> int:
+def enrich_findings(binary_path: str, findings: list,
+                     timeout: int = _DEFAULT_TIMEOUT,
+                     analysis_timeout: int = _DEFAULT_ANALYSIS_TIMEOUT) -> int:
     """Attach decompiled pseudocode to findings whose evidence lives in
     `binary_path`. Returns the number of findings enriched."""
     targets: set[str] = set()
@@ -109,7 +131,7 @@ def enrich_findings(binary_path: str, findings: list, timeout: int = 900) -> int
                 targets.add(ev.function)
     if not targets:
         return 0
-    code = decompile(binary_path, sorted(targets), timeout=timeout)
+    code = decompile(binary_path, sorted(targets), timeout=timeout, analysis_timeout=analysis_timeout)
     if not code:
         return 0
     n = 0

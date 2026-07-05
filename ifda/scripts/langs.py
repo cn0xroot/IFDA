@@ -165,6 +165,21 @@ def scan_lang_scripts(target: str, max_files: int = 20000) -> list[Finding]:
     return findings
 
 
+def list_lang_scripts(target: str, max_files: int = 20000) -> list[tuple[str, str]]:
+    """(path, language) pairs for PHP/Python/Lua scripts found, regardless of
+    whether scanning them produced any findings — see shell.list_scripts."""
+    out: list[tuple[str, str]] = []
+    n = 0
+    for path in _iter_files(target):
+        if n >= max_files:
+            break
+        n += 1
+        lang = _detect_lang(path)
+        if lang:
+            out.append((path, lang.name))
+    return out
+
+
 def _iter_files(target: str):
     if os.path.isfile(target):
         yield target

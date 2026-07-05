@@ -46,14 +46,25 @@ that drives this core one job at a time via the CLI. The JSON model
 
 ## Install
 
+> Full step-by-step environment setup (Go upgrade, cross-compilers, Ghidra + JDK
+> pitfalls, verification) is in [`ENVIRONMENT.md`](ENVIRONMENT.md).
+
 ```bash
 # Python analysis core
 apt-get install -y python3-capstone python3-pyelftools   # or: pip install -e .
-pip install yara-python   # optional: enables the YARA stage if data/yara/*.yar exist
+pip install cve-bin-tool   # required: FR-VUL-1 broad CVE coverage (NVD/OSV/RedHat/GitLab/Curl)
+pip install yara-python    # optional: enables the YARA stage if data/yara/*.yar exist
 
 # Go service layer (optional — only if you want the REST API + web UI)
 cd service && go build -o ifda-service .                # Go 1.22+
 ```
+
+`cve-bin-tool` maintains its own local CVE database (NVD + OSV + RedHat + GitLab
+Advisory + Curl, ~1GB+); the first scan on a machine downloads/updates it, so
+expect that run to be slow and to need network access. Without it, `analyze()`
+still runs but CVE correlation falls back to the small curated
+`data/vuln_db.json` and the report carries a visible warning about the missing
+dependency (NFR-USE-1 — one missing piece degrades, it doesn't crash the job).
 
 ## Usage
 
@@ -96,7 +107,10 @@ go build -o ifda-service .                 # Go 1.22+, first time only
 ```
 
 Flags: `-addr`, `-core`, `-workers` (default 2), `-queue`, `-data` (triage state
-+ uploads dir; default `$TMPDIR/ifda-service`).
++ uploads dir; default `$TMPDIR/ifda-service`), `-auth` (default `true`),
+`-user`/`-pass` (seed an account on first run only — doesn't overwrite a
+password already changed via the web UI; add `-reset-pass` to force it). See
+[`service/README.md`](service/README.md) for the full explanation.
 
 **Web UI** (Alpine.js, embedded — no build step, works air-gapped): submit a
 server path *or* upload a file, then watch live SSE progress and explore:
@@ -158,7 +172,7 @@ an unchanged target returns a cached result.
 | FR-RE-6 Cross-references (call sites, strings) | ✅ (call/import xrefs) | `re/disasm.py` |
 | FR-RE-7 Scriptable API | ✅ (library + CLI) | `pipeline.py`, `cli.py` |
 | FR-RE-2 Decompiled pseudocode | ✅ (opt-in Ghidra headless; enriches findings) | `re/decompile.py` |
-| FR-VUL-1 Known-CVE correlation | ✅ (offline DB) | `vuln/cve.py`, `data/vuln_db.json` |
+| FR-VUL-1 Known-CVE correlation | ✅ curated offline DB + required `cve-bin-tool` (NVD/OSV/RedHat/GitLab/Curl, 350+ components) | `vuln/cve.py`, `vuln/cve_bin_tool.py`, `data/vuln_db.json` |
 | FR-VUL-2 Dangerous-function detection | ✅ | `vuln/dangerous_funcs.py` |
 | FR-VUL-3 Taint / reachability | ✅ (call-graph heuristic) | `vuln/taint.py` |
 | FR-VUL-4 Vuln-class coverage | ◑ overflow/cmdi/code-inj/file-incl/deserialization/fmt/weak-crypto | `vuln/catalog.py`, `scripts/langs.py` |
@@ -186,11 +200,13 @@ explicitly candidate paths for analyst validation, not proven exploits.
 python3 -m pytest tests/ -q
 ```
 
-20 tests, all passing. They build real cross-compiled samples (x86_64, MIPS
-LE/BE, ARM, ARM Thumb-2, AArch64) and cover: the seeded command-injection
-acceptance case (source→sink path to `system()`), per-arch import-call
-resolution and cross-binary RCE, mitigation detection, CVE correlation
-(including not flagging patched versions), embedded secrets (externalized
+25 passed, 2 skipped with cross-compilers + Ghidra installed (the skips are
+opt-in live tests — see `ENVIRONMENT.md`). They build real cross-compiled
+samples (x86_64, MIPS LE/BE, ARM, ARM Thumb-2, AArch64) and cover: the seeded
+command-injection acceptance case (source→sink path to `system()`), per-arch
+import-call resolution and cross-binary RCE, mitigation detection, CVE
+correlation — both the curated offline DB (including not flagging patched
+versions) and `cve-bin-tool`'s entry parsing — embedded secrets (externalized
 signature rules + entropy fallback, with redaction), shell/CGI command
 injection, PHP/Python/Lua injection (cmd/code/file-inclusion/deserialization),
 filesystem hardening, CycloneDX SBOM, prioritization ordering, and triage

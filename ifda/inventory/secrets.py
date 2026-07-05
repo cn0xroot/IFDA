@@ -23,7 +23,11 @@ RULE = "embedded-secret"
 _MAX_BYTES = 8 * 1024 * 1024
 
 _PEM_PRIVATE = re.compile(
+    # "PRIVATE KEY" covers RSA/EC/DSA/OpenSSH/PGP; "AES KEY" is a distinct PEM
+    # header (raw AES key block) EMBA's deep_key_search.cfg also flags and our
+    # own list didn't have.
     r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+    r"|-----BEGIN .*AES KEY-----"
 )
 _CERT = re.compile(r"-----BEGIN CERTIFICATE-----")
 
@@ -70,6 +74,40 @@ _KEYHINT = re.compile(
 _ENTROPY_B64_MIN = 4.0    # bits/char; random base64 ~5.0, English ~3.0
 _ENTROPY_HEX_MIN = 3.2    # hex caps at 4.0; random hex ~3.9
 _MAX_ENTROPY_HITS = 25    # per-file noise cap
+
+# C++ Itanium-mangled symbol names (e.g. "_ZNSt14basic_ifstream...") are mixed
+# alphanumeric with high character diversity and routinely clear the entropy
+# bar, but they are compiler-generated identifiers, not secrets. Mangling
+# grammar encodes each identifier segment as <decimal-length><that-many-chars>
+# (e.g. "14basic_ifstream" = 14 chars of "basic_ifstream"); real random
+# secrets satisfy that invariant more than once in the same token only by
+# extreme coincidence, so it is a reliable discriminator without needing a
+# demangler dependency.
+_MANGLE_PREFIXES = ("_Z", "St", "NSt", "Ios_", "cxx11")
+
+
+def _looks_mangled(tok: str) -> bool:
+    if tok.startswith(_MANGLE_PREFIXES):
+        return True
+    hits = 0
+    i, n = 0, len(tok)
+    while i < n:
+        if tok[i].isdigit():
+            j = i
+            while j < n and tok[j].isdigit():
+                j += 1
+            length = int(tok[i:j])
+            ident = tok[j:j + length]
+            if (1 <= length <= 40 and len(ident) == length and ident
+                    and (ident[0].isalpha() or ident[0] == "_")
+                    and all(c.isalnum() or c == "_" for c in ident)):
+                hits += 1
+                if hits >= 2:
+                    return True
+                i = j + length
+                continue
+        i += 1
+    return False
 
 
 def scan_secrets(target: str, max_files: int = 20000) -> list[Finding]:
@@ -136,10 +174,22 @@ def _scan_text(path: str, text: str) -> list[Finding]:
                        "Remove default credentials; use strong, per-device passwords.",
                        f"{m.group(1)}:{_redact(hash_field)}"))
 
+    # The same literal assignment (e.g. a string constant baked into an ELF's
+    # rodata from several translation units, or a shell script that sets and
+    # later re-echoes the same variable) can appear more than once in one
+    # file. Evidence carries no offset/line number, so two such matches are
+    # indistinguishable and would otherwise become two Finding objects with
+    # an identical fingerprint — corrupting the web UI's x-for :key (see
+    # Finding.fingerprint's docstring) instead of just being one finding.
+    seen_assign: set[tuple[str, str]] = set()
     for m in _ASSIGN.finditer(text):
         val = m.group(2).strip()
         if _PLACEHOLDER.match(val) or val.startswith("$(") or val.startswith("${"):
             continue
+        key = (m.group(1).lower(), val)
+        if key in seen_assign:
+            continue
+        seen_assign.add(key)
         out.append(_mk(path, "hardcoded_credential", Severity.HIGH, 0.6,
                        f"Hardcoded credential ({m.group(1).lower()})",
                        f"Assignment of {m.group(1).lower()} to a literal value.",
@@ -173,6 +223,11 @@ def _entropy_findings(path: str, text: str, already: list[Finding]) -> list[Find
         if tok in seen:
             continue
         is_hex = bool(_HEX.match(tok))
+        # Mangled C++ symbols always contain letters outside a-f (s, t, c, i, …)
+        # so a token that is purely hex can never be one; skip the (more
+        # expensive) mangling check for it rather than risk a false skip.
+        if not is_hex and _looks_mangled(tok):
+            continue
         if is_hex:
             if len(tok) < 32:                 # short hex = ids/offsets, skip
                 continue

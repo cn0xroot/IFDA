@@ -35,6 +35,27 @@ auto-detected by walking up from cwd), `-workers` (concurrent analyses, default
 Requires `python3` with the `ifda` package importable from `-core` (i.e. the
 core's deps installed: `python3-capstone python3-pyelftools`).
 
+### Auth flags: `-auth` / `-user` / `-pass` / `-reset-pass`
+
+`-auth` defaults to `true` (login required). `-user`/`-pass` only **seed** an
+account the first time it's created (e.g. first launch against a fresh
+`-data` dir, or a username that doesn't exist yet in `users.json`) — they do
+**not** overwrite a password that already exists, including one changed via
+the web UI's User center → Change password. This is deliberate: if your
+launch command (a systemd unit, a docker-compose command line, ...) always
+passes the same `-user`/`-pass`, treating that as "set this every time" would
+silently revert any password a user picked in the UI on every restart, with
+no indication anything happened. When this path is taken, the log says so:
+
+```
+-user/-pass ignored: "admin" already has a password (possibly changed via the web UI) — pass -reset-pass to force it back to -pass
+```
+
+To actually force a password (e.g. recovering a forgotten one), pass
+`-reset-pass` alongside `-user`/`-pass` — it overwrites unconditionally, every
+time it's present, so remove it from the launch command again once you're
+back in.
+
 ## REST API
 
 | Method & path | Purpose |

@@ -64,6 +64,21 @@ def scan_scripts(target: str, max_files: int = 20000) -> list[Finding]:
     return findings
 
 
+def list_scripts(target: str, max_files: int = 20000) -> list[str]:
+    """Paths identified as shell/CGI scripts, regardless of whether scanning
+    them produced any findings — so a clean script is still visible in the
+    inventory (FR-INV-3), not just ones with something wrong."""
+    out: list[str] = []
+    n = 0
+    for path in _iter_files(target):
+        if n >= max_files:
+            break
+        n += 1
+        if _is_shell(path):
+            out.append(path)
+    return out
+
+
 def _iter_files(target: str):
     if os.path.isfile(target):
         yield target
@@ -85,8 +100,38 @@ def _is_shell(path: str) -> bool:
         return False
 
 
+def _join_continuations(text: str) -> tuple[list[str], list[int]]:
+    """Join backslash line-continuations into logical lines.
+
+    Without this, a wrapped command like `cryptsetup ... \\` / `    $DEVICE`
+    reads as two independent physical lines; the second one then *looks* like
+    `$DEVICE` is being executed as a command, when it is really just the last
+    argument of the line above. Returns (logical_lines, starting_lineno) so
+    evidence can still point at the first physical line of each command.
+    """
+    raw = text.splitlines()
+    out_lines: list[str] = []
+    out_lineno: list[int] = []
+    buf = ""
+    start = 0
+    for i, line in enumerate(raw, 1):
+        if not buf:
+            start = i
+        if line.endswith("\\") and not line.strip().startswith("#"):
+            buf += line[:-1] + " "
+            continue
+        buf += line
+        out_lines.append(buf)
+        out_lineno.append(start)
+        buf = ""
+    if buf:
+        out_lines.append(buf)
+        out_lineno.append(start)
+    return out_lines, out_lineno
+
+
 def _analyze(path: str, text: str) -> list[Finding]:
-    lines = text.splitlines()
+    lines, linenos = _join_continuations(text)
     tainted: set[str] = set(_UNTRUSTED_VARS)
 
     # Pass 1: propagate taint through assignments and `read`.
@@ -106,7 +151,7 @@ def _analyze(path: str, text: str) -> list[Finding]:
     # (eval, sh -c, command-name position) are injection; an unquoted variable as
     # a mere *argument* does not re-parse `;`/`|`, so it is a weaker lead.
     out: list[Finding] = []
-    for i, line in enumerate(lines, 1):
+    for line, i in zip(lines, linenos):
         s = line.strip()
         if not s or s.startswith("#"):
             continue

@@ -15,6 +15,8 @@ from .report import write_json, render_markdown, render_cyclonedx
 from .report.json_report import to_json_str
 from .model import TriageState
 from .vuln import TriageStore
+from .vuln.cve import load_db
+from .vuln.cve_bin_tool import cve_bin_tool_available, list_checkers, db_stats
 
 
 def _cmd_analyze(args) -> int:
@@ -58,6 +60,29 @@ def _cmd_triage(args) -> int:
     return 0
 
 
+def _cmd_vulndb(args) -> int:
+    """Report what the CVE-correlation stages actually cover: the small
+    curated fallback DB (offline, always available) plus cve-bin-tool's much
+    broader checker set (FR-VUL-1), if installed. Consumed by the Go
+    service's GET /api/vulndb so the web UI doesn't imply coverage is only
+    the curated DB's handful of components."""
+    checkers = list_checkers()
+    counts = db_stats()
+    doc = {
+        "curated": load_db(),
+        "cve_bin_tool": {
+            "available": cve_bin_tool_available(),
+            "checkers": checkers,
+            "checker_count": len(checkers),
+            "data_sources": ["NVD", "OSV", "RedHat", "GitLab Advisory", "Curl"],
+            "cve_counts": counts,
+            "cve_count_total": sum(counts.values()),
+        },
+    }
+    print(json.dumps(doc))
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="ifda", description="Firmware RE + vuln analysis core")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -79,6 +104,9 @@ def main(argv=None) -> int:
     t.add_argument("finding_id")
     t.add_argument("state", choices=[s.value for s in TriageState])
     t.set_defaults(func=_cmd_triage)
+
+    v = sub.add_parser("vulndb", help="report CVE-correlation coverage (curated DB + cve-bin-tool)")
+    v.set_defaults(func=_cmd_vulndb)
 
     args = p.parse_args(argv)
     return args.func(args)

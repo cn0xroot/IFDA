@@ -10,8 +10,9 @@ dist/
 service/ifda-service
 service/fwana-service
 
-# Service runtime data (triage state, uploads)
+# Service runtime data (triage state, uploads, users.json password hashes)
 service/data/
+service/.data/
 
 # Editor / OS
 .DS_Store

@@ -120,21 +120,52 @@ class Finding:
         """Stable identity for triage persistence across re-scans (FR-VUL-8).
 
         Deliberately independent of severity/description so re-tuning detectors
-        doesn't orphan an analyst's triage decision.
+        doesn't orphan an analyst's triage decision. Snippet and cve_ids *are*
+        included: several detectors (secrets, import-presence dangerous-funcs,
+        CVE correlation) don't have a function/address to pin the location to,
+        so without the matched content itself every distinct hit in the same
+        file collapses onto one id — corrupting both triage (one decision
+        silently applies to unrelated findings) and the web UI's `x-for :key`
+        (duplicate keys make list items appear/disappear on re-render).
         """
         import hashlib
 
         loc = ";".join(
-            f"{e.binary}:{e.function}:{e.address:#x}" for e in self.evidence
+            f"{e.binary}:{e.function}:{e.address:#x}:{e.snippet}" for e in self.evidence
         )
-        h = hashlib.sha256(f"{self.rule}|{self.vuln_class}|{loc}".encode())
+        cves = ",".join(sorted(self.cve_ids))
+        h = hashlib.sha256(f"{self.rule}|{self.vuln_class}|{loc}|{cves}".encode())
         return h.hexdigest()[:16]
+
+
+@dataclass
+class ScriptInfo:
+    """A non-ELF script file that was scanned (FR-INV-3), independent of
+    whether anything was found in it — so a clean script is still visible
+    somewhere, the way a clean binary still shows up in ``binaries``."""
+    path: str
+    kind: str            # "shell" | "php" | "python" | "lua"
+    findings: int = 0
+
+
+@dataclass
+class ComponentInfo:
+    """A software component detected in the firmware (FR-INV-5), the same
+    extractor that feeds the CycloneDX SBOM (report/sbom.py) — surfaced live
+    in the report too, so components without a correlated CVE are still
+    visible instead of only reachable via a downloaded SBOM."""
+    name: str
+    version: str
+    binaries: list[str] = field(default_factory=list)
+    cve_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
 class AnalysisReport:
     target: str
     binaries: list[BinaryInfo] = field(default_factory=list)
+    scripts: list[ScriptInfo] = field(default_factory=list)
+    components: list[ComponentInfo] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     tool_version: str = ""
     generated_at: str = ""
