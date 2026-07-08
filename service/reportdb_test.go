@@ -148,6 +148,64 @@ func TestBusyboxAuditRoundTrip(t *testing.T) {
 	}
 }
 
+// Dashboard cert_count/rsa_cert_count (ifda/inventory/secrets.py's
+// count_certificates()) round-trip through report_meta the same way
+// kernel_version/file_count already do.
+func TestCertCountsRoundTrip(t *testing.T) {
+	db, err := NewReportDB(filepath.Join(t.TempDir(), "reports.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := []byte(`{
+		"target": "/fw", "tool_version": "test", "generated_at": "now",
+		"binaries": [], "scripts": [], "components": [], "findings": [],
+		"cert_count": 169, "rsa_cert_count": 152
+	}`)
+	if _, _, _, err := db.Ingest("job-1", reportJSON, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := db.GetSummary("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.CertCount != 169 || summary.RsaCertCount != 152 {
+		t.Errorf("CertCount=%d RsaCertCount=%d, want 169/152", summary.CertCount, summary.RsaCertCount)
+	}
+
+	full, err := db.ExportFull("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(full), `"cert_count":169`) || !strings.Contains(string(full), `"rsa_cert_count":152`) {
+		t.Errorf("ExportFull does not include cert counts: %s", full)
+	}
+}
+
+// A job ingested before cert_count/rsa_cert_count existed (or a report that
+// simply omits them) must degrade to 0, not error or a NULL that breaks the
+// dashboard's arithmetic.
+func TestCertCountsDefaultToZero(t *testing.T) {
+	db, err := NewReportDB(filepath.Join(t.TempDir(), "reports.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := []byte(`{
+		"target": "/fw", "tool_version": "test", "generated_at": "now",
+		"binaries": [], "scripts": [], "components": [], "findings": []
+	}`)
+	if _, _, _, err := db.Ingest("job-1", reportJSON, nil); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := db.GetSummary("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.CertCount != 0 || summary.RsaCertCount != 0 {
+		t.Errorf("CertCount=%d RsaCertCount=%d, want 0/0", summary.CertCount, summary.RsaCertCount)
+	}
+}
+
 // FileKnown gates the Files tab's content-preview endpoint -- it must only
 // ever confirm paths the scan itself recorded, and must be job-scoped (a
 // path from a different job's scan is not "known" here even if the string

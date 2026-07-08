@@ -13,6 +13,9 @@ import os
 import re
 from collections import Counter
 
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import rsa
+
 from ..model import Finding, Evidence, Severity
 from ..rules import load_rules, apply_rules, run_yara, yara_available
 
@@ -267,6 +270,55 @@ def _line_of(text: str, pat: re.Pattern) -> str:
     start = text.rfind("\n", 0, m.start()) + 1
     end = text.find("\n", m.start())
     return text[start : end if end != -1 else len(text)].strip()[:120]
+
+
+_CERT_BLOCK = re.compile(rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", re.DOTALL)
+
+
+def count_certificates(target: str, max_files: int = 20000) -> tuple[int, int]:
+    """FR-INV: (total certificates, RSA-keyed certificates) embedded anywhere
+    in the tree -- dashboard inventory counts, not Findings (a device shipping
+    with an embedded TLS/CA certificate isn't itself a vulnerability the way a
+    private key is, so this doesn't spam the findings list the way _PEM_PRIVATE
+    above does; it's purely "how many are there" for the summary).
+
+    A file can embed more than one certificate (a CA bundle, a chain) --
+    each PEM block is counted separately, not just "does this file have one".
+    RSA-ness is determined by actually parsing the certificate (via the
+    `cryptography` library), not guessed from the PEM header, since X.509
+    certificates don't encode the key algorithm in a fixed-format header the
+    way private keys' "-----BEGIN RSA PRIVATE KEY-----" does.
+    """
+    total = 0
+    rsa_total = 0
+    count = 0
+    for path in _iter_files(target):
+        if count >= max_files:
+            break
+        count += 1
+        try:
+            size = os.path.getsize(path)
+            if size == 0 or size > _MAX_BYTES:
+                continue
+            with open(path, "rb") as fh:
+                data = fh.read(_MAX_BYTES)
+        except OSError:
+            continue
+        if b"-----BEGIN CERTIFICATE-----" not in data:
+            continue
+        for block in _CERT_BLOCK.findall(data):
+            total += 1
+            if _is_rsa_cert(block):
+                rsa_total += 1
+    return total, rsa_total
+
+
+def _is_rsa_cert(pem_block: bytes) -> bool:
+    try:
+        cert = x509.load_pem_x509_certificate(pem_block)
+        return isinstance(cert.public_key(), rsa.RSAPublicKey)
+    except Exception:
+        return False  # malformed/truncated/unsupported -- still counted in `total`, just not `rsa_total`
 
 
 def _redact(s: str) -> str:

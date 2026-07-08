@@ -737,6 +737,90 @@ def test_config_audit_no_findings_on_clean_config(tmp_path):
     assert scan_configs(str(tmp_path)) == []
 
 
+def _make_test_cert(key, common_name: str) -> bytes:
+    """Build a minimal self-signed PEM certificate for `key` -- used to test
+    count_certificates()'s RSA-vs-not detection without needing a real
+    firmware sample's cert on disk."""
+    import datetime
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.x509.oid import NameOID
+
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name).issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=365))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+def test_count_certificates_rsa_vs_non_rsa(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric import rsa, ec
+    from ifda.inventory import count_certificates
+
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ec_key = ec.generate_private_key(ec.SECP256R1())
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "rsa_cert.pem").write_bytes(_make_test_cert(rsa_key, "rsa-device"))
+    (tmp_path / "etc" / "ec_cert.pem").write_bytes(_make_test_cert(ec_key, "ec-device"))
+    (tmp_path / "etc" / "not_a_cert.txt").write_text("just some text, no PEM markers here\n")
+
+    total, rsa_total = count_certificates(str(tmp_path))
+    assert total == 2       # both certs counted regardless of key algorithm
+    assert rsa_total == 1   # only the RSA-keyed one
+
+
+def test_count_certificates_bundle_counts_each_block(tmp_path):
+    """A single file can embed more than one certificate (a CA bundle/chain)
+    -- each PEM block must be counted separately, not "does this file have a
+    cert" (which would undercount)."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from ifda.inventory import count_certificates
+
+    key_a = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    key_b = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    bundle = _make_test_cert(key_a, "ca-a") + _make_test_cert(key_b, "ca-b")
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "ca-bundle.crt").write_bytes(bundle)
+
+    total, rsa_total = count_certificates(str(tmp_path))
+    assert total == 2
+    assert rsa_total == 2
+
+
+def test_count_certificates_none_present(tmp_path):
+    from ifda.inventory import count_certificates
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "plain.conf").write_text("option foo bar\n")
+
+    assert count_certificates(str(tmp_path)) == (0, 0)
+
+
+def test_pipeline_reports_cert_counts(tmp_path):
+    """Regression: the counts must actually reach AnalysisReport (wired into
+    the firmware-meta pipeline stage), not just be reachable as a standalone
+    function."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from ifda.pipeline import analyze
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "device.pem").write_bytes(_make_test_cert(key, "device"))
+
+    report = analyze(str(tmp_path))
+    assert report.cert_count == 1
+    assert report.rsa_cert_count == 1
+
+
 def test_cyclonedx_sbom():
     from ifda.report.sbom import render_cyclonedx
     import json

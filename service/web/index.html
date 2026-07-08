@@ -221,6 +221,7 @@
   table.bins td.preview-cell { background:var(--panel2); padding:12px 14px; }
   .chip { display:inline-block; font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px;
           margin:1px 2px; }
+  .chip.clickable { cursor:pointer; } .chip.clickable:hover { outline:1px solid var(--accent); }
   .chip.ok{background:rgba(34,197,94,.15);color:var(--ok)}
   .chip.bad{background:rgba(239,68,68,.15);color:var(--bad)}
   .chip.warn{background:rgba(234,179,8,.15);color:var(--warn)}
@@ -841,6 +842,43 @@
             <span class="chip neutral" x-show="summary.file_count" x-text="t('fw_files')+': '+summary.file_count.toLocaleString()"></span>
             <span class="chip neutral" x-show="summary.firmware_size" x-text="t('fw_size')+': '+formatSize(summary.firmware_size)"></span>
           </div>
+          <div class="fwmeta" x-show="componentsPage.total || configFileCount || summary.cert_count">
+            <span class="chip neutral clickable" x-show="componentsPage.total" @click="tab='components'"
+                  x-text="t('fw_components')+': '+componentsPage.total"></span>
+            <span class="chip neutral clickable" x-show="configFileCount" @click="tab='files'; filesKindFilter='config'; loadFiles()"
+                  x-text="t('fw_config_files')+': '+configFileCount"></span>
+            <span class="chip neutral" x-show="summary.cert_count"
+                  x-text="t('fw_certs')+': '+summary.cert_count+(summary.rsa_cert_count?' ('+summary.rsa_cert_count+' RSA)':'')"></span>
+          </div>
+          <template x-if="componentsPage.total">
+            <details style="margin:0 0 14px">
+              <summary style="cursor:pointer;color:var(--muted);font-size:12px" x-text="t('fw_component_names_show')"></summary>
+              <div class="kwrow" style="margin-top:8px">
+                <template x-for="c in componentsPage.items" :key="c.name+'@'+c.version">
+                  <span class="chip neutral" x-text="c.name+' '+c.version"></span>
+                </template>
+              </div>
+            </details>
+          </template>
+
+          <div class="distro" x-show="busyboxAudit.has_busybox">
+            <h3 x-text="t('dash_busybox_h')"></h3>
+            <div class="cards">
+              <div class="card clickable" @click="tab='busybox'">
+                <div class="n sev-low" x-text="busyboxAudit.compiled_in.length"></div><div class="l" x-text="t('dash_busybox_compiled')"></div>
+              </div>
+              <div class="card clickable" @click="tab='busybox'">
+                <div class="n sev-crit" x-text="busyboxAudit.missing.length"></div><div class="l" x-text="t('dash_busybox_missing')"></div>
+              </div>
+              <div class="card clickable" @click="tab='busybox'">
+                <div class="n" x-text="extraCommands.length"></div><div class="l" x-text="t('dash_busybox_extra')"></div>
+              </div>
+              <div class="card clickable" @click="tab='busybox'">
+                <div class="n" x-text="initScripts.length"></div><div class="l" x-text="t('dash_busybox_init')"></div>
+              </div>
+            </div>
+          </div>
+
           <div class="distro">
             <h3 x-text="t('by_severity')"></h3>
             <template x-for="s in SEVS" :key="s">
@@ -1366,6 +1404,15 @@ const I18N = {
   fw_arch:              { en: "Architecture",                          zh: "架构" },
   fw_files:             { en: "Files scanned",                         zh: "扫描文件数" },
   fw_size:              { en: "Firmware size",                         zh: "固件大小" },
+  fw_components:        { en: "Components",                            zh: "组件数" },
+  fw_config_files:      { en: "Config files",                          zh: "配置文件数" },
+  fw_certs:             { en: "Certificates",                          zh: "证书数" },
+  fw_component_names_show: { en: "Show component names",               zh: "展开查看组件名称" },
+  dash_busybox_h:       { en: "BusyBox overview",                      zh: "BusyBox 情况" },
+  dash_busybox_compiled:{ en: "Applets compiled in",                   zh: "已有指令数" },
+  dash_busybox_missing: { en: "Missing (crippled)",                    zh: "被移除指令数" },
+  dash_busybox_extra:   { en: "Extra commands",                        zh: "自有指令数" },
+  dash_busybox_init:    { en: "init.d scripts",                        zh: "init 初始化脚本数" },
   by_severity:          { en: "By severity",                          zh: "按严重度" },
   by_vuln_class:        { en: "By vulnerability class",                zh: "按漏洞类别" },
   filter_all_classes:   { en: "All classes",                          zh: "全部类别" },
@@ -2161,6 +2208,10 @@ function app() {
     get scripts() { return this.scriptsPage.items || []; },
     get components() { return this.componentsPage.items || []; },
     get files() { return this.filesPage.items || []; },
+    // Dashboard "config files" count: filesStringsAll is the one place every
+    // file (not just the current Files-tab page) is already loaded client
+    // side, so this needs no extra request -- just filter what's there.
+    get configFileCount() { return this.filesStringsAll.filter(f => f.kind === "config").length; },
     get extraCommands() { return this.busyboxAudit.extra_commands || []; },
     get initScripts() { return this.busyboxAudit.init_scripts || []; },
     // Every distinct bin/sbin directory an extra command was found under

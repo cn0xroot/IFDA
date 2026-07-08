@@ -5,6 +5,30 @@
 
 ## 0. 变更记录
 
+- **2026-07-08 — v3.4:仪表盘新增组件/配置文件/证书统计、BusyBox 情况概览、真实证书检测。**
+  自 v3.3 以来的改动。
+
+  - 新增证书检测能力(`inventory/secrets.py` 的 `count_certificates()`):此前代码里有个匹配
+    `-----BEGIN CERTIFICATE-----` 的正则从未真正接上,现在补全并用 `cryptography` 库真正解析
+    每一张证书判断公钥算法,而不是从 PEM 头猜——证书本身不像私钥那样把算法写在头部里。一个文件
+    内多张证书(CA bundle/证书链)按张数分别计数,不会只算"这个文件有没有证书"而漏计。属于纯
+    库存类统计(不产生 Finding,不会像私钥检测那样刷屏 Findings 列表)。`cryptography` 正式列入
+    `pyproject.toml` 依赖(此前只是运行环境里恰好装了,并非项目显式声明)。
+  - 仪表盘内核信息下方新增一行:组件数(点击展开可看全部组件名+版本)、配置文件数(点击直接跳转
+    Files 页并按 config 类型筛选)、证书数(含其中 RSA 证书数量)。组件数/配置文件数复用已有数据
+    (`componentsPage`/`filesStringsAll`),证书数据经上述新字段(`cert_count`/`rsa_cert_count`)
+    随 report_meta 一起落库、经 Summary 接口下发。
+  - 仪表盘新增"BusyBox 情况"卡片区(已编译指令数、被移除/阉割指令数、自有指令数、init.d 脚本数),
+    直接复用 BusyBox 标签页已经在用的 `busyboxAudit` 数据,未新增后端接口;四张卡片均可点击跳转
+    BusyBox 标签页。
+  - `ifda.__version__` 同步升到 2.3.0。
+
+  验证:Python 47 通过/2 跳过(`tests/test_core.py` 新增 7 个:证书检测 RSA/非 RSA 区分、
+  bundle 多证书计数、管道集成);Go 全量通过(`reportdb_test.go` 新增 2 个:cert 计数往返、
+  旧任务/缺省字段兜底为 0)。真实固件样本端到端验证(bank_B 分区:169 个证书、其中 152 个 RSA、
+  27 个组件、51 个配置文件、BusyBox 164 已编译/231 缺失/265 额外指令/38 个 init.d 脚本,
+  仪表盘数字与截图逐一核对一致)。
+
 - **2026-07-08 — v3.3:修复 config 文件预览回归、二进制/脚本标签页改为服务端真分页。**
   自 v3.2 以来的改动。
 

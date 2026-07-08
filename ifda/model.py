@@ -244,6 +244,13 @@ class AnalysisReport:
     endian_summary: str = ""
     file_count: int = 0
     firmware_size: int = 0
+    # Embedded X.509 certificates found anywhere in the tree (FR-INV): total
+    # count and, of those, how many are RSA-keyed -- see
+    # inventory/secrets.py's count_certificates(). Inventory numbers for the
+    # dashboard, not Findings (an embedded cert isn't itself a vulnerability
+    # the way an embedded private key is).
+    cert_count: int = 0
+    rsa_cert_count: int = 0
 
 
 def to_dict(obj) -> dict:

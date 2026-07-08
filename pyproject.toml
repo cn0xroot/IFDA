@@ -11,6 +11,7 @@ dependencies = [
     "capstone>=4.0",
     "pyelftools>=0.29",
     "cve-bin-tool>=3.4",
+    "cryptography>=41.0",
 ]
 
 [project.optional-dependencies]

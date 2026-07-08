@@ -38,6 +38,8 @@ type rawReport struct {
 	EndianSummary string            `json:"endian_summary"`
 	FileCount     int               `json:"file_count"`
 	FirmwareSize  int64             `json:"firmware_size"`
+	CertCount     int               `json:"cert_count"`
+	RsaCertCount  int               `json:"rsa_cert_count"`
 	Binaries      []json.RawMessage `json:"binaries"`
 	Scripts       []json.RawMessage `json:"scripts"`
 	Components    []json.RawMessage `json:"components"`
@@ -88,7 +90,8 @@ func (r *ReportDB) migrate() error {
 			target TEXT, tool_version TEXT, generated_at TEXT,
 			kernel_version TEXT, arch_summary TEXT, endian_summary TEXT,
 			file_count INTEGER, firmware_size INTEGER,
-			busybox_audit TEXT
+			busybox_audit TEXT,
+			cert_count INTEGER, rsa_cert_count INTEGER
 		)`,
 		`CREATE TABLE IF NOT EXISTS findings (
 			job_id TEXT, id TEXT, title TEXT, vuln_class TEXT, severity TEXT,
@@ -138,6 +141,8 @@ func (r *ReportDB) migrate() error {
 	alters := []string{
 		`ALTER TABLE report_meta ADD COLUMN busybox_audit TEXT`,
 		`ALTER TABLE files ADD COLUMN kind TEXT`,
+		`ALTER TABLE report_meta ADD COLUMN cert_count INTEGER`,
+		`ALTER TABLE report_meta ADD COLUMN rsa_cert_count INTEGER`,
 	}
 	for _, s := range alters {
 		if _, err := r.db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -176,11 +181,11 @@ func (r *ReportDB) Ingest(jobID string, reportJSON []byte, triageOverlay map[str
 	}
 
 	_, err = tx.Exec(`INSERT INTO report_meta
-		(job_id, target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(job_id, target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, rep.Target, rep.ToolVersion, rep.GeneratedAt,
 		rep.KernelVersion, rep.ArchSummary, rep.EndianSummary, rep.FileCount, rep.FirmwareSize,
-		string(orEmptyObject(rep.BusyboxAudit)))
+		string(orEmptyObject(rep.BusyboxAudit)), rep.CertCount, rep.RsaCertCount)
 	if err != nil {
 		return
 	}
@@ -345,7 +350,7 @@ func (r *ReportDB) CopyJob(fromID, toID string) error {
 		return err
 	}
 	stmts := []struct{ table, cols string }{
-		{"report_meta", "target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit"},
+		{"report_meta", "target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count"},
 		{"findings", "id, title, vuln_class, severity, confidence, component, rule, description, remediation, cve_ids, evidence, triage, pseudocode"},
 		{"binaries", "path, data"},
 		{"scripts", "path, data"},
@@ -374,6 +379,8 @@ type Summary struct {
 	EndianSummary string         `json:"endian_summary"`
 	FileCount     int            `json:"file_count"`
 	FirmwareSize  int64          `json:"firmware_size"`
+	CertCount     int            `json:"cert_count"`
+	RsaCertCount  int            `json:"rsa_cert_count"`
 	Findings      int            `json:"findings"`
 	Binaries      int            `json:"binaries"`
 	Scripts       int            `json:"scripts"`
@@ -386,11 +393,10 @@ type Summary struct {
 func (r *ReportDB) GetSummary(jobID string) (*Summary, error) {
 	s := &Summary{BySeverity: map[string]int{}, ByVulnClass: map[string]int{}}
 	row := r.db.QueryRow(`SELECT target, tool_version, generated_at, kernel_version, arch_summary,
-		endian_summary, file_count, firmware_size FROM report_meta WHERE job_id = ?`, jobID)
+		endian_summary, file_count, firmware_size, cert_count, rsa_cert_count FROM report_meta WHERE job_id = ?`, jobID)
 	var kv, as, es sql.NullString
-	var fc sql.NullInt64
-	var fs sql.NullInt64
-	if err := row.Scan(&s.Target, &s.ToolVersion, &s.GeneratedAt, &kv, &as, &es, &fc, &fs); err != nil {
+	var fc, fs, cc, rcc sql.NullInt64
+	if err := row.Scan(&s.Target, &s.ToolVersion, &s.GeneratedAt, &kv, &as, &es, &fc, &fs, &cc, &rcc); err != nil {
 		if err == sql.ErrNoRows {
 			return s, nil // report not ingested (yet) — empty summary, not an error
 		}
@@ -398,6 +404,7 @@ func (r *ReportDB) GetSummary(jobID string) (*Summary, error) {
 	}
 	s.KernelVersion, s.ArchSummary, s.EndianSummary = kv.String, as.String, es.String
 	s.FileCount, s.FirmwareSize = int(fc.Int64), fs.Int64
+	s.CertCount, s.RsaCertCount = int(cc.Int64), int(rcc.Int64)
 
 	rows, err := r.db.Query(`SELECT severity, COUNT(*) FROM findings WHERE job_id = ? GROUP BY severity`, jobID)
 	if err != nil {
@@ -740,11 +747,14 @@ func (r *ReportDB) ExportFull(jobID string) ([]byte, error) {
 		FileCount                                 sql.NullInt64
 		FirmwareSize                              sql.NullInt64
 		BusyboxAudit                              sql.NullString
+		CertCount, RsaCertCount                   sql.NullInt64
 	}
 	err := r.db.QueryRow(`SELECT target, tool_version, generated_at, kernel_version, arch_summary,
-		endian_summary, file_count, firmware_size, busybox_audit FROM report_meta WHERE job_id = ?`, jobID).Scan(
+		endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count
+		FROM report_meta WHERE job_id = ?`, jobID).Scan(
 		&meta.Target, &meta.ToolVersion, &meta.GeneratedAt, &meta.KernelVersion, &meta.ArchSummary,
-		&meta.EndianSummary, &meta.FileCount, &meta.FirmwareSize, &meta.BusyboxAudit)
+		&meta.EndianSummary, &meta.FileCount, &meta.FirmwareSize, &meta.BusyboxAudit,
+		&meta.CertCount, &meta.RsaCertCount)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("no report for job %s", jobID)
 	}
@@ -805,6 +815,12 @@ func (r *ReportDB) ExportFull(jobID string) ([]byte, error) {
 	}
 	if meta.FirmwareSize.Valid {
 		doc["firmware_size"] = meta.FirmwareSize.Int64
+	}
+	if meta.CertCount.Valid {
+		doc["cert_count"] = meta.CertCount.Int64
+	}
+	if meta.RsaCertCount.Valid {
+		doc["rsa_cert_count"] = meta.RsaCertCount.Int64
 	}
 	return json.Marshal(doc)
 }

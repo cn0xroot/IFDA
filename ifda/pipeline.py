@@ -28,6 +28,7 @@ from .vuln.cve import extract_sbom
 from .vuln.crossbinary import detect_cross_binary_taint
 from .inventory import (
     scan_secrets, detect_kernel_version, list_all_files, summarize_arch_endian, audit_busybox,
+    count_certificates,
 )
 from .scripts import scan_scripts, scan_lang_scripts, list_scripts, list_lang_scripts
 from .fs import scan_filesystem
@@ -270,6 +271,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
             [b.arch for b in report.binaries], [b.endian for b in report.binaries])
         report.file_count = len(report.files)
         report.firmware_size = sum(f.size for f in report.files)
+        report.cert_count, report.rsa_cert_count = count_certificates(target)
     except Exception:
         pass
 
