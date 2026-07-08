@@ -1003,6 +1003,17 @@
               </tbody>
             </table>
           </div>
+          <div class="pager" x-show="binariesPage.total > binariesPage.limit">
+            <button class="ghost sm" :disabled="binariesPage.offset<=0" @click="binariesPrevPage()" x-text="t('btn_prev_page')"></button>
+            <span class="sub" x-text="(binariesPage.offset+1)+'–'+Math.min(binariesPage.offset+binariesPage.limit, binariesPage.total)+' / '+binariesPage.total"></span>
+            <button class="ghost sm" :disabled="binariesPage.offset+binariesPage.limit>=binariesPage.total" @click="binariesNextPage()" x-text="t('btn_next_page')"></button>
+            <span class="pager-jump">
+              <input type="number" min="1" :max="Math.max(1,Math.ceil(binariesPage.total/binariesPage.limit))"
+                     x-model="binariesJumpTo" @keydown.enter="binariesGoToPage()"
+                     :placeholder="String(Math.floor(binariesPage.offset/binariesPage.limit)+1)">
+              <button class="ghost sm" @click="binariesGoToPage()" x-text="t('btn_go_page')"></button>
+            </span>
+          </div>
         </div>
 
         <!-- SCRIPTS -->
@@ -1028,6 +1039,17 @@
                 </template>
               </tbody>
             </table>
+          </div>
+          <div class="pager" x-show="scriptsPage.total > scriptsPage.limit">
+            <button class="ghost sm" :disabled="scriptsPage.offset<=0" @click="scriptsPrevPage()" x-text="t('btn_prev_page')"></button>
+            <span class="sub" x-text="(scriptsPage.offset+1)+'–'+Math.min(scriptsPage.offset+scriptsPage.limit, scriptsPage.total)+' / '+scriptsPage.total"></span>
+            <button class="ghost sm" :disabled="scriptsPage.offset+scriptsPage.limit>=scriptsPage.total" @click="scriptsNextPage()" x-text="t('btn_next_page')"></button>
+            <span class="pager-jump">
+              <input type="number" min="1" :max="Math.max(1,Math.ceil(scriptsPage.total/scriptsPage.limit))"
+                     x-model="scriptsJumpTo" @keydown.enter="scriptsGoToPage()"
+                     :placeholder="String(Math.floor(scriptsPage.offset/scriptsPage.limit)+1)">
+              <button class="ghost sm" @click="scriptsGoToPage()" x-text="t('btn_go_page')"></button>
+            </span>
           </div>
         </div>
 
@@ -1595,19 +1617,26 @@ function app() {
     // just aggregate counts, however big the underlying scan was.
     summary: null,
     findingsPage: { items: [], total: 0, offset: 0, limit: 50 },
-    binariesPage: { items: [], total: 0 },
-    scriptsPage: { items: [], total: 0 },
+    // Binaries/scripts can run into the hundreds on a real firmware (537/246
+    // on the reference target) -- real server-side pagination, same pattern
+    // as findingsPage/filesPage, not the old load-everything-via-?all=1.
+    binariesPage: { items: [], total: 0, offset: 0, limit: 100 },
+    scriptsPage: { items: [], total: 0, offset: 0, limit: 100 },
+    // Components (SBOM entries) stay as a single ?all=1 load -- orders of
+    // magnitude fewer than binaries/scripts in practice (tens, not hundreds).
     componentsPage: { items: [], total: 0 },
-    // Files can genuinely run into the thousands (unlike binaries/scripts/
-    // components, which are loaded in full via ?all=1 below) -- real
-    // pagination, same pattern as findingsPage.
+    // Files can genuinely run into the thousands -- real pagination too.
     filesPage: { items: [], total: 0, offset: 0, limit: 200 },
     filesKindFilter: "",
     // Separate from filesPage (which stays paginated for the Files tab):
     // the Strings/Sensitive tabs need every non-binary file's extracted
-    // strings at once, the same way binaries/scripts already load via
-    // ?all=1 -- a keyword search can't work against just one page.
+    // strings at once -- a keyword search can't work against just one page.
     filesStringsAll: [],
+    // Same reasoning, for binaries: stringsSources (below) needs every
+    // binary's strings regardless of which page the Binaries tab itself
+    // happens to have loaded, so this is fetched separately via ?all=1
+    // rather than reusing binariesPage.items (which is now just one page).
+    binariesStringsAll: [],
     // BusyBox applet audit + bin/sbin extra commands + /etc/init.d dump
     // (see ifda/inventory/busybox_audit.py) -- small enough to load whole,
     // unlike findings/files.
@@ -1646,7 +1675,7 @@ function app() {
     // at 3000 by computeSensitive), so paging it is just a slice -- no
     // server round trip needed, unlike findings/files.
     sensitivePage: { offset: 0, limit: 200 },
-    findingsJumpTo: "", filesJumpTo: "", sensitiveJumpTo: "",
+    findingsJumpTo: "", filesJumpTo: "", sensitiveJumpTo: "", binariesJumpTo: "", scriptsJumpTo: "",
 
     async init() {
       this.applyTheme();
@@ -1838,7 +1867,7 @@ function app() {
         const steps = [
           this.loadFindings(), this.loadBinaries(), this.loadScripts(),
           this.loadComponents(), this.loadFiles(), this.loadFilesStringsAll(),
-          this.loadBusyboxAudit(),
+          this.loadBinariesStringsAll(), this.loadBusyboxAudit(),
         ];
         const total = steps.length + 1;
         let done = 1;
@@ -1894,17 +1923,64 @@ function app() {
       this.findingsJumpTo = "";
       this.loadFindings(false);
     },
-    // Loaded in full (?all=1, no LIMIT server-side): binaries/scripts/
-    // components are never remotely as numerous as findings or files in
-    // practice, so simplicity wins over paginating three more tabs.
+    // Loaded in full (?all=1, no LIMIT server-side): components are never
+    // remotely as numerous as findings/files/binaries/scripts in practice,
+    // so simplicity wins over paginating a fourth tab.
     async loadPagedListAll(kind) {
-      const page = kind + "Page"; // "binaries" -> "binariesPage", etc.
+      const page = kind + "Page"; // "components" -> "componentsPage"
       const r = await this.apiFetch(`/api/jobs/${this.selectedId}/${kind}?all=1`);
       if (r.ok) this[page] = await r.json();
     },
-    loadBinaries() { return this.loadPagedListAll("binaries"); },
-    loadScripts() { return this.loadPagedListAll("scripts"); },
     loadComponents() { return this.loadPagedListAll("components"); },
+    async loadBinaries(resetOffset = true) {
+      if (resetOffset) this.binariesPage.offset = 0;
+      const p = new URLSearchParams({ offset: this.binariesPage.offset, limit: this.binariesPage.limit });
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/binaries?${p}`);
+      if (r.ok) this.binariesPage = await r.json();
+    },
+    binariesPrevPage() {
+      if (this.binariesPage.offset <= 0) return;
+      this.binariesPage.offset = Math.max(0, this.binariesPage.offset - this.binariesPage.limit);
+      this.loadBinaries(false);
+    },
+    binariesNextPage() {
+      if (this.binariesPage.offset + this.binariesPage.limit >= this.binariesPage.total) return;
+      this.binariesPage.offset += this.binariesPage.limit;
+      this.loadBinaries(false);
+    },
+    binariesGoToPage() {
+      this.binariesPage.offset = this.clampPageOffset(this.binariesJumpTo, this.binariesPage.total, this.binariesPage.limit);
+      this.binariesJumpTo = "";
+      this.loadBinaries(false);
+    },
+    // stringsSources needs every binary's strings regardless of which page
+    // the Binaries tab table itself is showing -- loaded separately, same
+    // pattern as loadFilesStringsAll.
+    async loadBinariesStringsAll() {
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/binaries?all=1`);
+      if (r.ok) this.binariesStringsAll = (await r.json()).items || [];
+    },
+    async loadScripts(resetOffset = true) {
+      if (resetOffset) this.scriptsPage.offset = 0;
+      const p = new URLSearchParams({ offset: this.scriptsPage.offset, limit: this.scriptsPage.limit });
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/scripts?${p}`);
+      if (r.ok) this.scriptsPage = await r.json();
+    },
+    scriptsPrevPage() {
+      if (this.scriptsPage.offset <= 0) return;
+      this.scriptsPage.offset = Math.max(0, this.scriptsPage.offset - this.scriptsPage.limit);
+      this.loadScripts(false);
+    },
+    scriptsNextPage() {
+      if (this.scriptsPage.offset + this.scriptsPage.limit >= this.scriptsPage.total) return;
+      this.scriptsPage.offset += this.scriptsPage.limit;
+      this.loadScripts(false);
+    },
+    scriptsGoToPage() {
+      this.scriptsPage.offset = this.clampPageOffset(this.scriptsJumpTo, this.scriptsPage.total, this.scriptsPage.limit);
+      this.scriptsJumpTo = "";
+      this.loadScripts(false);
+    },
     async loadFiles(resetOffset = true) {
       if (resetOffset) this.filesPage.offset = 0;
       const p = new URLSearchParams({ offset: this.filesPage.offset, limit: this.filesPage.limit });
@@ -1926,11 +2002,16 @@ function app() {
       this.busyboxAudit = r.ok ? await r.json() : {};
       this.busyboxDirFilter = ""; this.busyboxQuery = "";
     },
-    // Preview only makes sense for text-ish, non-ELF files -- config files
-    // and recognized scripts, exactly what the Files tab can't show anywhere
-    // else (Binaries/Scripts tabs only cover their own kind, and a binary's
-    // "content" is already shown as disassembly/strings, not raw bytes).
-    previewableKind(kind) { return kind === "script" || kind === "other"; },
+    // Preview only makes sense for text-ish, non-ELF files -- every
+    // non-binary, non-symlink kind (config/script/other), which is exactly
+    // what the Files tab can't show anywhere else (Binaries/Scripts tabs
+    // only cover their own kind, a binary's "content" is already shown as
+    // disassembly/strings not raw bytes, and a symlink has no content of
+    // its own to read). Written as an exclusion, not an allow-list, so a
+    // future new kind is previewable by default instead of silently losing
+    // the click-to-preview affordance the way "config" briefly did when it
+    // was added as its own kind but this list wasn't updated to match.
+    previewableKind(kind) { return kind !== "binary" && kind !== "symlink"; },
     async openFilePreview(f) {
       if (!this.previewableKind(f.kind)) return;
       if (this.filePreviewPath === f.path) { this.filePreviewPath = ""; return; } // toggle closed
@@ -2393,7 +2474,7 @@ function app() {
     // (empty, oversized, or symlinks) are filtered out here.
     get stringsSources() {
       const extra = this.filesStringsAll.filter(f => (f.strings || []).length);
-      return [...this.binaries, ...extra];
+      return [...this.binariesStringsAll, ...extra];
     },
     onStringsTab() {
       if (!this.stringsSources.some(b => b.path === this.stringsBinary)) {
