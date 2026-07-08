@@ -6,6 +6,7 @@ from .cve import correlate_cves
 from .cve_bin_tool import cve_bin_tool_available, scan_target
 from .findings import prioritize, TriageStore
 from .backdoor import scan_backdoors
+from .config_audit import scan_configs
 
 __all__ = [
     "detect_dangerous_functions",
@@ -16,4 +17,5 @@ __all__ = [
     "prioritize",
     "TriageStore",
     "scan_backdoors",
+    "scan_configs",
 ]

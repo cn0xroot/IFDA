@@ -194,6 +194,18 @@
   .taint { color:var(--high); }
   pre.code { background:var(--code); border:1px solid var(--line); border-radius:5px; padding:9px 11px;
         font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow-x:auto; margin:6px 0 0; }
+  /* Lightweight preview syntax highlighting (Files/BusyBox tabs) -- colors
+     drawn from the active theme's own palette so it stays legible and
+     on-brand across every theme (including "light"), not just the dark ones
+     this was designed against. */
+  pre.code .tok-comment { color:var(--muted); font-style:italic; }
+  pre.code .tok-string { color:var(--ok); }
+  pre.code .tok-keyword { color:var(--accent-h); font-weight:600; }
+  pre.code .tok-variable { color:var(--accent2); }
+  pre.code .tok-number { color:var(--warn); }
+  pre.code .tok-section { color:var(--accent-h); font-weight:700; }
+  pre.code .tok-key { color:var(--soft); font-weight:600; }
+  pre.code .tok-tag { color:var(--accent); }
   .tristrip { display:flex; gap:6px; align-items:center; margin-top:10px; flex-wrap:wrap; }
   .tristrip .lab { color:var(--muted); font-size:12px; }
   .tristrip .cur { font-size:11px; font-weight:700; padding:1px 8px; border-radius:10px;
@@ -529,7 +541,7 @@
                     <template x-for="row in vulnDBRows" :key="row.component+row.cve">
                       <tr>
                         <td x-text="row.component"></td>
-                        <td x-text="row.cve"></td>
+                        <td><a :href="cveUrl(row.cve)" target="_blank" rel="noopener" x-text="row.cve"></a></td>
                         <td><span class="sevtag" :class="'bg-'+SHORT[row.severity]" x-text="tSev(row.severity)"></span></td>
                         <td x-text="row.versionText"></td>
                         <td x-text="row.summary"></td>
@@ -608,7 +620,11 @@
                   <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
                   <span class="t" x-text="f.title"></span>
                   <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
-                  <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0" x-text="f.cve_ids.join(', ')"></span>
+                  <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0">
+                    <template x-for="(cve, ci) in f.cve_ids" :key="cve">
+                      <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" @click.stop x-text="cve"></a><span x-show="ci < f.cve_ids.length-1">, </span></span>
+                    </template>
+                  </span>
                   <span x-text="open?'▾':'▸'"></span>
                 </div>
                 <div class="body" x-show="open">
@@ -640,7 +656,11 @@
                   <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
                   <span class="t" x-text="f.title"></span>
                   <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
-                  <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0" x-text="f.cve_ids.join(', ')"></span>
+                  <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0">
+                    <template x-for="(cve, ci) in f.cve_ids" :key="cve">
+                      <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" @click.stop x-text="cve"></a><span x-show="ci < f.cve_ids.length-1">, </span></span>
+                    </template>
+                  </span>
                   <span x-text="open?'▾':'▸'"></span>
                 </div>
                 <div class="body" x-show="open">
@@ -885,7 +905,11 @@
                 <span class="t" x-text="f.title"></span>
                 <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
                 <span x-show="(f.triage&&f.triage!=='new')" class="cur" :class="f.triage" x-text="tTriage(f.triage)"></span>
-                <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0" x-text="f.cve_ids.join(', ')"></span>
+                <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0">
+                  <template x-for="(cve, ci) in f.cve_ids" :key="cve">
+                    <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" @click.stop x-text="cve"></a><span x-show="ci < f.cve_ids.length-1">, </span></span>
+                  </template>
+                </span>
                 <span x-text="open?'▾':'▸'"></span>
               </div>
               <div class="body" x-show="open">
@@ -966,9 +990,10 @@
                       <span x-show="!(b.warnings&&b.warnings.length)">—</span>
                     </td>
                     <td>
-                      <a href="#" x-show="cvesFor(b.path)" @click.prevent="goToCves(b.path)"
-                         x-text="cvesFor(b.path)"></a>
-                      <span x-show="!cvesFor(b.path)">—</span>
+                      <template x-for="(cve, ci) in cvesFor(b.path)" :key="cve">
+                        <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" x-text="cve"></a><span x-show="ci < cvesFor(b.path).length-1">, </span></span>
+                      </template>
+                      <span x-show="!cvesFor(b.path).length">—</span>
                     </td>
                     <td><a href="#" @click.prevent="tab='strings'; stringsBinary=b.path"
                            x-text="(b.strings&&b.strings.length)||0"></a></td>
@@ -1022,9 +1047,9 @@
                     <td x-text="c.version"></td>
                     <td :title="(c.binaries||[]).join('\n')" x-text="(c.binaries&&c.binaries.length)||0"></td>
                     <td>
-                      <a href="#" x-show="c.cve_ids&&c.cve_ids.length"
-                         @click.prevent="goToFindings({vclass:'known_cve', q:c.name+'@'+c.version})"
-                         x-text="(c.cve_ids||[]).join(', ')"></a>
+                      <template x-for="(cve, ci) in (c.cve_ids||[])" :key="cve">
+                        <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" x-text="cve"></a><span x-show="ci < c.cve_ids.length-1">, </span></span>
+                      </template>
                       <span x-show="!(c.cve_ids&&c.cve_ids.length)">—</span>
                     </td>
                   </tr>
@@ -1037,6 +1062,17 @@
         <!-- FILES -->
         <div x-show="tab==='files'">
           <p class="meta" x-text="t('files_hint')"></p>
+          <div class="filters">
+            <select x-model="filesKindFilter" @change="loadFiles()">
+              <option value="" x-text="t('filter_all_kinds')"></option>
+              <option value="binary" x-text="tFileKind('binary')"></option>
+              <option value="script" x-text="tFileKind('script')"></option>
+              <option value="config" x-text="tFileKind('config')"></option>
+              <option value="symlink" x-text="tFileKind('symlink')"></option>
+              <option value="other" x-text="tFileKind('other')"></option>
+            </select>
+            <span class="count" x-text="filesPage.total"></span>
+          </div>
           <template x-if="!files.length"><div class="empty" x-text="t('no_files')"></div></template>
           <div class="table-wrap" x-show="files.length">
             <table class="bins">
@@ -1069,7 +1105,7 @@
                       </template>
                       <template x-if="!filePreviewLoading && filePreviewEntry && !filePreviewEntry.error">
                         <div>
-                          <pre class="code" style="max-height:50vh" x-text="filePreviewEntry.content"></pre>
+                          <pre class="code" style="max-height:50vh" x-html="highlightedPreview"></pre>
                           <p class="meta" x-show="filePreviewEntry.truncated" x-text="t('file_preview_truncated')"></p>
                         </div>
                       </template>
@@ -1239,7 +1275,7 @@
                       </template>
                       <template x-if="!filePreviewLoading && filePreviewEntry && !filePreviewEntry.error">
                         <div>
-                          <pre class="code" style="max-height:50vh" x-text="filePreviewEntry.content"></pre>
+                          <pre class="code" style="max-height:50vh" x-html="highlightedPreview"></pre>
                           <p class="meta" x-show="filePreviewEntry.truncated" x-text="t('file_preview_truncated')"></p>
                         </div>
                       </template>
@@ -1256,7 +1292,7 @@
           <template x-for="s in initScripts" :key="s.path">
             <details style="margin-bottom:8px">
               <summary style="cursor:pointer" x-text="shortPath(s.path)"></summary>
-              <pre class="code" style="max-height:50vh" x-text="s.content"></pre>
+              <pre class="code" style="max-height:50vh" x-html="highlightPreview(s.content, detectPreviewLang(s.path, s.content))"></pre>
               <p class="meta" x-show="s.truncated" x-text="t('busybox_initd_truncated')"></p>
             </details>
           </template>
@@ -1400,8 +1436,10 @@ const I18N = {
                              zh: "(内容已截断——文件超出预览大小上限)" },
   file_kind_binary:     { en: "binary",                                 zh: "二进制" },
   file_kind_script:     { en: "script",                                 zh: "脚本" },
+  file_kind_config:     { en: "config",                                 zh: "配置文件" },
   file_kind_symlink:    { en: "symlink",                                zh: "符号链接" },
   file_kind_other:      { en: "other",                                  zh: "其他" },
+  filter_all_kinds:     { en: "All kinds",                              zh: "全部类型" },
   no_strings_match:     { en: "No strings match the filter.",         zh: "没有符合筛选条件的字符串。" },
   strings_truncated:    { en: "Showing the first 2000 matches — narrow your search to see more precisely.",
                            zh: "仅显示前 2000 条匹配结果——缩小搜索范围可看到更精确的结果。" },
@@ -1564,6 +1602,7 @@ function app() {
     // components, which are loaded in full via ?all=1 below) -- real
     // pagination, same pattern as findingsPage.
     filesPage: { items: [], total: 0, offset: 0, limit: 200 },
+    filesKindFilter: "",
     // Separate from filesPage (which stays paginated for the Files tab):
     // the Strings/Sensitive tabs need every non-binary file's extracted
     // strings at once, the same way binaries/scripts already load via
@@ -1779,7 +1818,7 @@ function app() {
           return;
         }
         this.summary = await r.json();
-        this.filePreviewPath = ""; this.filePreviewCache = {};
+        this.filePreviewPath = ""; this.filePreviewCache = {}; this.filesKindFilter = "";
         // Filters/selections (severity toggles, vuln-class, the Sensitive
         // tab's per-binary picker, the Strings tab's binary picker) are
         // scoped to whichever report was loaded when they were set. Left
@@ -1869,6 +1908,7 @@ function app() {
     async loadFiles(resetOffset = true) {
       if (resetOffset) this.filesPage.offset = 0;
       const p = new URLSearchParams({ offset: this.filesPage.offset, limit: this.filesPage.limit });
+      if (this.filesKindFilter) p.set("kind", this.filesKindFilter);
       const r = await this.apiFetch(`/api/jobs/${this.selectedId}/files?${p}`);
       if (r.ok) this.filesPage = await r.json();
     },
@@ -1910,6 +1950,88 @@ function app() {
       }
     },
     get filePreviewEntry() { return this.filePreviewCache[this.filePreviewPath] || null; },
+    // Highlighted-HTML version of the currently-open preview, for the
+    // x-html-bound <pre> -- computed lazily (only while a preview is open)
+    // rather than in openFilePreview(), so switching themes or re-opening a
+    // cached preview never needs a re-fetch to re-render with color.
+    get highlightedPreview() {
+      const entry = this.filePreviewEntry;
+      if (!entry || entry.error || !entry.content) return "";
+      return this.highlightPreview(entry.content, this.detectPreviewLang(this.filePreviewPath, entry.content));
+    },
+    // Regex-token highlighting for the two kinds of content the Files/
+    // BusyBox previews actually show (shell scripts, config files in their
+    // common shapes) -- not a general-purpose highlighter, just enough
+    // structure (comments/strings/keys/keywords) to make either readable at
+    // a glance instead of a wall of single-color text.
+    detectPreviewLang(path, content) {
+      const head = (content || "").slice(0, 200).trimStart();
+      if (/^#!.*\b(ba|da|k)?sh\b/.test(head)) return "shell";
+      if (/\.(sh|bash)$/i.test(path || "")) return "shell";
+      const trimmed = (content || "").trimStart();
+      if (trimmed.startsWith("<")) return "xml";
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "json";
+      return "config";
+    },
+    escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    },
+    // Shared driver for every highlighter below: walks `re`'s matches in
+    // order, HTML-escaping the untouched text between them plus each
+    // match's own text (never trusting raw file content as HTML), and wraps
+    // whichever capture group fired in `classes[groupIndex]`.
+    tokenize(text, re, classes) {
+      let out = "", last = 0, m;
+      while ((m = re.exec(text))) {
+        out += this.escapeHtml(text.slice(last, m.index));
+        for (let i = 0; i < classes.length; i++) {
+          if (m[i + 1] !== undefined) {
+            out += `<span class="${classes[i]}">${this.escapeHtml(m[i + 1])}</span>`;
+            break;
+          }
+        }
+        last = re.lastIndex;
+      }
+      out += this.escapeHtml(text.slice(last));
+      return out;
+    },
+    highlightPreview(content, lang) {
+      switch (lang) {
+        case "shell": return this.highlightShell(content);
+        case "xml": return this.highlightXml(content);
+        case "json": return this.highlightJson(content);
+        default: return this.highlightConfig(content);
+      }
+    },
+    highlightShell(text) {
+      const kw = "if|then|else|elif|fi|for|while|until|do|done|case|esac|function|return|exit" +
+                 "|local|export|readonly|shift|break|continue|in|select";
+      const re = new RegExp(
+        "(#[^\\n]*)" +                                   // 1: comment (incl. shebang)
+        "|(\"(?:\\\\.|[^\"\\\\])*\"|'[^']*'|`[^`]*`)" +   // 2: string / backtick substitution
+        "|(\\$\\{[^}]*\\}|\\$[A-Za-z_][A-Za-z0-9_]*|\\$[0-9@*#?$!-])" + // 3: variable
+        `|(\\b(?:${kw})\\b)`,                             // 4: keyword
+        "g");
+      return this.tokenize(text, re, ["tok-comment", "tok-string", "tok-variable", "tok-keyword"]);
+    },
+    highlightConfig(text) {
+      // Generic config catch-all covering the two shapes firmware configs
+      // actually come in: classic ini/"key = value" (comment lines, [section]
+      // headers, key before the : or =) and OpenWrt/UCI-style ("config foo",
+      // "option bar baz", "list bar baz" -- whitespace-separated, no "="),
+      // extremely common in real IoT firmware. Not a real grammar for either,
+      // just enough tokens to break up the wall of text.
+      const re = /(^[ \t]*[#;][^\n]*$)|(^[ \t]*\[[^\]\n]*\][ \t]*$)|("(?:\\.|[^"\\])*"|'[^']*')|(^[ \t]*(?:config|option|list)\b)|(^[ \t]*[A-Za-z0-9_.\-]+(?=[ \t]*[:=]))/gm;
+      return this.tokenize(text, re, ["tok-comment", "tok-section", "tok-string", "tok-keyword", "tok-key"]);
+    },
+    highlightXml(text) {
+      const re = /(<!--[\s\S]*?-->)|("[^"]*"|'[^']*')|(<\/?[A-Za-z][\w:.\-]*|\/?>)/g;
+      return this.tokenize(text, re, ["tok-comment", "tok-string", "tok-tag"]);
+    },
+    highlightJson(text) {
+      const re = /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(\btrue\b|\bfalse\b|\bnull\b)|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/g;
+      return this.tokenize(text, re, ["tok-key", "tok-string", "tok-keyword", "tok-number"]);
+    },
     filesNextPage() {
       if (this.filesPage.offset + this.filesPage.limit >= this.filesPage.total) return;
       this.filesPage.offset += this.filesPage.limit;
@@ -1991,7 +2113,7 @@ function app() {
     },
     tFileKind(kind) { return this.t("file_kind_" + (kind || "other")); },
     fileKindChipClass(kind) {
-      return { binary: "ok", script: "warn", symlink: "neutral", other: "neutral" }[kind] || "neutral";
+      return { binary: "ok", script: "warn", config: "warn", symlink: "neutral", other: "neutral" }[kind] || "neutral";
     },
     async setTriage(f, state) {
       const r = await this.apiFetch(`/api/jobs/${this.selectedId}/triage`, {method:"POST",
@@ -2425,8 +2547,11 @@ function app() {
       // that feeds the SBOM export), and are loaded in full, so use that.
       return [...new Set(this.components
         .filter(c => (c.binaries||[]).includes(path))
-        .flatMap(c => c.cve_ids||[]))].join(", ");
+        .flatMap(c => c.cve_ids||[]))];
     },
+    // NVD's detail page for one CVE id -- every place a CVE number is shown
+    // links here (opened in a new tab, not navigating away from the scan).
+    cveUrl(cve) { return `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(cve)}`; },
     mitChips(m) {
       if (!m) return "—";
       const c = (label, good, cls) => `<span class="chip ${cls}">${good?'✓':'✗'} ${label}</span>`;

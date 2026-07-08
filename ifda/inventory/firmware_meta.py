@@ -40,6 +40,45 @@ _MODULES_DIR_RE = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?[\w.+-]*$")
 # flash dump, an uncompressed initrd, ...) without meaningfully risking a miss.
 _SCAN_CAP = 8 * 1024 * 1024
 
+# Extensions/basenames that make something a config file almost by
+# definition -- checked before any content sniff, so it still works for an
+# oversized or otherwise-unreadable file.
+_CONFIG_EXTENSIONS = {
+    ".conf", ".cfg", ".config", ".ini", ".toml", ".yaml", ".yml",
+    ".xml", ".properties", ".rc",
+}
+_CONFIG_BASENAMES = {
+    "passwd", "shadow", "group", "hosts", "resolv.conf", "fstab", "inittab",
+    "hostapd.conf", "dnsmasq.conf", "smb.conf", "sshd_config", "sysctl.conf",
+    "services", "nsswitch.conf",
+}
+# UCI (OpenWrt-style) configs are extensionless but always live under a
+# directory literally named "config" -- extremely common in real IoT
+# firmware (e.g. /etc/config/dhcp), so a path marker catches them where the
+# extension list can't.
+_CONFIG_PATH_MARKER = "/config/"
+
+
+def is_config_file(path: str, head: bytes | None = None) -> bool:
+    """True if `path` looks like a hand-authored configuration file rather
+    than a binary/data blob. Path/extension/basename heuristics run first
+    (cheap, no I/O, and still correct for a file too large or unreadable to
+    sniff); `head` (the file's first bytes, if the caller already has them
+    in hand from its own read -- never opened again just for this) adds an
+    ini "[section]" / OpenWrt-UCI "config " content sniff as a fallback for
+    extensionless files outside a recognized config directory.
+    """
+    base = os.path.basename(path)
+    ext = os.path.splitext(base)[1].lower()
+    if ext in _CONFIG_EXTENSIONS or base in _CONFIG_BASENAMES:
+        return True
+    if _CONFIG_PATH_MARKER in path.replace(os.sep, "/"):
+        return True
+    if not head:
+        return False
+    text = head[:200].decode("utf-8", "replace").lstrip()
+    return text.startswith("config ") or text.startswith("[")
+
 
 def detect_kernel_version(target: str, max_entries: int = 200000) -> str:
     """Returns the kernel version for `target`, or "" if undetermined.
@@ -129,9 +168,11 @@ def list_all_files(
             size = os.path.getsize(target)
         except OSError:
             return []
-        strings = [] if target in binary_paths else _extract_file_strings(target, size)
+        data = b"" if target in binary_paths else _read_capped(target, size)
+        strings = extract_strings(data)[:_STRINGS_MAX_PER_FILE] if data else []
+        is_cfg = target not in binary_paths and is_config_file(target, data or None)
         return [{"path": target, "size": size, "md5": _hash_if_worth_it(target, size),
-                 "is_symlink": False, "strings": strings}]
+                 "is_symlink": False, "strings": strings, "is_config": is_cfg}]
 
     out: list[dict] = []
     n = 0
@@ -147,15 +188,20 @@ def list_all_files(
                     size = os.lstat(path).st_size
                 except OSError:
                     size = 0
-                out.append({"path": path, "size": size, "md5": "", "is_symlink": is_link, "strings": []})
+                out.append({"path": path, "size": size, "md5": "", "is_symlink": is_link,
+                            "strings": [], "is_config": False})
                 continue
             try:
                 size = os.path.getsize(path)
             except OSError:
                 continue
-            strings = [] if path in binary_paths else _extract_file_strings(path, size)
+            # Read once, reused for both string extraction and the config
+            # content-sniff fallback -- avoids opening the same file twice.
+            data = b"" if path in binary_paths else _read_capped(path, size)
+            strings = extract_strings(data)[:_STRINGS_MAX_PER_FILE] if data else []
+            is_cfg = path not in binary_paths and is_config_file(path, data or None)
             out.append({"path": path, "size": size, "md5": _hash_if_worth_it(path, size),
-                        "is_symlink": False, "strings": strings})
+                        "is_symlink": False, "strings": strings, "is_config": is_cfg})
     return out
 
 
@@ -179,15 +225,18 @@ _STRINGS_SIZE_CAP = 2 * 1024 * 1024
 _STRINGS_MAX_PER_FILE = 500
 
 
-def _extract_file_strings(path: str, size: int) -> list[str]:
+def _read_capped(path: str, size: int) -> bytes:
+    """Read up to _STRINGS_SIZE_CAP bytes of `path`, or b"" if it's empty,
+    oversized, or unreadable. Shared by string extraction and the config
+    content-sniff fallback (is_config_file) so a file is never opened twice
+    just to classify it two different ways."""
     if size == 0 or size > _STRINGS_SIZE_CAP:
-        return []
+        return b""
     try:
         with open(path, "rb") as fh:
-            data = fh.read(_STRINGS_SIZE_CAP)
+            return fh.read(_STRINGS_SIZE_CAP)
     except OSError:
-        return []
-    return extract_strings(data)[:_STRINGS_MAX_PER_FILE]
+        return b""
 
 
 def scan_tree_stats(target: str, max_entries: int = 200000) -> tuple[int, int]:

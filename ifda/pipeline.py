@@ -22,10 +22,13 @@ from .vuln import (
     prioritize,
     TriageStore,
     scan_backdoors,
+    scan_configs,
 )
 from .vuln.cve import extract_sbom
 from .vuln.crossbinary import detect_cross_binary_taint
-from .inventory import scan_secrets, detect_kernel_version, list_all_files, summarize_arch_endian, audit_busybox
+from .inventory import (
+    scan_secrets, detect_kernel_version, list_all_files, summarize_arch_endian, audit_busybox,
+)
 from .scripts import scan_scripts, scan_lang_scripts, list_scripts, list_lang_scripts
 from .fs import scan_filesystem
 
@@ -199,6 +202,18 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     except Exception:
         pass
 
+    # Config-file content security checks (FR-VUL): insecure settings left
+    # enabled (telnet, debug mode, default SNMP community, disabled TLS
+    # verification, WPS, UPnP, ...) -- complements scan_filesystem above
+    # (permission bits) and scan_secrets (hardcoded credential values), since
+    # neither notices a config file with sane permissions and no literal
+    # secret that still leaves an insecure service turned on by default.
+    emit("config-audit", 96, "config file hardening checks")
+    try:
+        report.findings.extend(scan_configs(target))
+    except Exception:
+        pass
+
     # Non-busybox command / suspected backdoor scan (FR-VUL).
     emit("backdoor", 97, "non-busybox command scan")
     try:
@@ -224,6 +239,8 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
                 kind = "binary"
             elif path in script_paths:
                 kind = "script"
+            elif entry.get("is_config"):
+                kind = "config"
             else:
                 kind = "other"
             report.files.append(FileEntry(path=path, kind=kind, size=entry["size"], md5=entry["md5"],

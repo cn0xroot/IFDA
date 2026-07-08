@@ -5,6 +5,45 @@
 
 ## 0. 变更记录
 
+- **2026-07-08 — v3.2:配置文件分类+内容安全审计、CVE 编号跳转 NVD、预览语法高亮、对比扫描报错修复。**
+  自 v3.0(`b314e2d`)以来的改动(3.1 版本号跳过,直接到 3.2)。
+
+  配置文件(新):
+  - 新增 `config` 文件类型分类(`inventory/firmware_meta.py` 的 `is_config_file()`):按扩展名
+    (`.conf/.cfg/.ini/.xml` 等)、已知文件名(`passwd/hosts/sshd_config` 等)、UCI 路径标记
+    (`/config/` 目录)、以及内容嗅探(`[section]`/`config xxx`)兜底判定,不再混在笼统的"other"里。
+    Files 标签页新增"类型"筛选下拉(全部/binary/script/**config**/symlink/other),`files` 表新增
+    `kind` 列做服务端过滤(不是前端假过滤),含一条数据库升级路径的回归测试(旧库缺 `kind` 列时
+    `ALTER TABLE` 必须先于依赖该列的索引创建执行)。
+  - 新增 `vuln/config_audit.py`(`config-hardening` 规则):检测配置文件**内容**里遗留的不安全
+    设置——telnet 开启、匿名 FTP 开启、debug/verbose 模式开启、SNMP 默认团体名(public/private)、
+    TLS 证书校验被关闭、WPS 开启、UPnP 开启。这是此前完全没覆盖的盲区(`fs/hardening.py` 只查
+    文件权限位,`inventory/secrets.py` 只查硬编码密码/密钥值,都不查"服务开关"类设置)。真实固件
+    验证发现 2 条真实命中(`/etc/config/upnpd` 的 `enable_upnp=1`、`wifi.cfg` 的 `WPS_ACTIVE_IF=1`)。
+    修复了规则本身一个真实的正则回溯 bug:`telnet_enable=0`(明确关闭)最初会被错误地把 key 名
+    里的"enable"当成开启值而误判,已加强制分隔符修正并补了回归测试。
+  - `ifda.__version__` 同步升到 2.2.0,让去重缓存对已缓存过的目标重新提交时能取到新分类/新
+    finding,而不是复用升级前的旧报告。
+
+  可视化 / 交互:
+  - CVE 编号(Findings/Components/Binaries 标签页 + CVE 数据库弹窗)全部改成可点击链接,跳转到
+    `https://nvd.nist.gov/vuln/detail/<CVE编号>`(新标签页打开)。Components/Binaries 原本点击
+    CVE 列表是跳到内部"按此组件/二进制过滤 findings",现统一改为跳 NVD。
+  - Files/BusyBox 标签页的文件预览新增语法高亮(纯前端正则 tokenizer,零依赖):按内容/路径自动
+    识别 shell/XML/JSON/通用 config(含 ini 风格和 OpenWrt/UCI 风格),配色跟随所选主题的强调色/
+    静音色变量,不是写死的固定颜色。同时修复了 BusyBox 页 `/etc/init.d` 脚本列表遗漏接入这套
+    高亮的疏漏(它是独立于"点击预览"的另一条展示路径)。
+  - 预览展开位置从页面/整个列表的最底部改为直接展开在被点击的那一行下方(HTML 表格改为
+    "每行一个 tbody"的写法实现行内展开),不再需要为了看预览内容滚到很远的地方。
+  - 修复对比扫描(Compare)返回"0 新增/全部消失/0 未变化"这类误导性结果的 bug:`runCompare()`
+    两个 `/report` 请求此前完全没检查 HTTP 状态码,鉴权过期/任务出错时返回的 `{"error":...}`
+    对象被当成"这一侧没有任何 finding"处理;现在检查 `r.ok` 并在失败时给出明确报错。
+
+  验证:Python 43 通过/2 跳过(`tests/test_core.py` 新增 5 个);Go 全量通过(`reportdb_test.go`
+  新增 3 个,含 `kind` 列过滤 + 数据库升级路径两个回归测试)。真实固件端到端验证
+  (真实固件样本 bank_B 分区:51 个文件被正确分类为 config,新增 2 条 config-hardening finding,
+  Files 标签页 Kind 筛选、CVE 链接、预览高亮均截图确认)。
+
 - **2026-07-08 — v3.0:剥离二进制函数恢复、CVE 同步可靠性、SQLite 分页迁移、BusyBox 指令对比、对比扫描/去重缓存修复。**
   自 v2.0(`ac32f3f`)以来积累的全部功能改动,一次性记录、提交、打 tag。
 

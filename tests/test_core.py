@@ -639,6 +639,104 @@ def test_busybox_audit_init_scripts(tmp_path):
     assert script.truncated is False
 
 
+def test_is_config_file_by_extension_and_path(tmp_path):
+    from ifda.inventory import is_config_file
+
+    assert is_config_file(str(tmp_path / "etc" / "dnsmasq.conf")) is True
+    assert is_config_file(str(tmp_path / "etc" / "passwd")) is True
+    # UCI-style: extensionless, but lives under a "config" directory.
+    assert is_config_file(str(tmp_path / "etc" / "config" / "dhcp")) is True
+    # Content sniff fallback for an extensionless file outside /config/.
+    assert is_config_file(str(tmp_path / "somefile"), head=b"[general]\nfoo=bar\n") is True
+    assert is_config_file(str(tmp_path / "somefile"), head=b"config dnsmasq\n\toption x 1\n") is True
+    # A random binary blob (or a script -- classification order in the
+    # pipeline already routes those away before this ever gets consulted)
+    # must not be misclassified.
+    assert is_config_file(str(tmp_path / "bin" / "busybox")) is False
+    assert is_config_file(str(tmp_path / "bin" / "app"), head=b"\x7fELF\x00\x00\x00\x00") is False
+
+
+def test_pipeline_classifies_config_kind(tmp_path):
+    """Regression: a plain .conf file must show up in report.files as
+    kind="config", not fall through to the generic "other" bucket -- that's
+    the whole point of adding a dedicated category (visibility on the Files
+    tab, and scan_configs below only looks at files classified this way)."""
+    from ifda.pipeline import analyze
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "dnsmasq.conf").write_text("option domainneeded 1\n")
+    (tmp_path / "etc" / "banner").write_text("just some banner text\n")
+
+    report = analyze(str(tmp_path))
+    by_path = {f.path: f for f in report.files}
+    assert by_path[str(tmp_path / "etc" / "dnsmasq.conf")].kind == "config"
+    assert by_path[str(tmp_path / "etc" / "banner")].kind == "other"
+
+
+def test_config_audit_detects_insecure_settings(tmp_path):
+    from ifda.vuln.config_audit import scan_configs
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "telnet.conf").write_text("telnet_enable=1\n")
+    (tmp_path / "etc" / "snmpd.conf").write_text("rocommunity public\n")
+    (tmp_path / "etc" / "app.conf").write_text("ssl_verify=0\ndebug=true\n")
+    # Explicitly disabled -- must NOT fire (this is the secure setting).
+    (tmp_path / "etc" / "safe.conf").write_text("telnet_enable=0\ndebug=false\n")
+
+    findings = scan_configs(str(tmp_path))
+    by_class = {f.vuln_class for f in findings}
+    assert "insecure_service_enabled" in by_class   # telnet
+    assert "default_credential" in by_class          # snmp public community
+    assert "insecure_tls" in by_class                # ssl_verify=0
+    assert "debug_mode_enabled" in by_class          # debug=true
+
+    safe_findings = [f for f in findings if "safe.conf" in f.component]
+    assert safe_findings == []
+
+
+def test_config_audit_compound_key_names(tmp_path):
+    """Real firmware never spells a flag as the bare word "telnet"/"upnp" --
+    it's always part of a compound key (ENABLE_TELNET_ACCESS, enable_upnp,
+    ...). Also a regression guard for a real bug this exposed: the
+    keyword-anywhere-in-key regex initially had no mandatory separator
+    between key and value, so it could backtrack "telnet_enable=0" into
+    key="telnet_" + value="enable" (a word inside the key itself satisfying
+    the truthy check) and fire even though the real value is 0."""
+    from ifda.vuln.config_audit import scan_configs
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "firewall.cfg").write_text(
+        "ENABLE_TELNET_ACCESS = 1;\n"
+        "WAN_TELNET_ACCESS_PORT = 2323;\n"
+    )
+    (tmp_path / "etc" / "firewall_off.cfg").write_text(
+        "ENABLE_TELNET_ACCESS = 0;\n"
+        "WAN_TELNET_ACCESS_PORT = 2323;\n"
+    )
+    (tmp_path / "etc" / "upnpd.conf").write_text("option enable_upnp\t1\n")
+
+    findings = scan_configs(str(tmp_path))
+    by_file = {}
+    for f in findings:
+        by_file.setdefault(os.path.basename(f.component), []).append(f.vuln_class)
+
+    assert "insecure_service_enabled" in by_file.get("firewall.cfg", [])
+    assert "expanded_attack_surface" in by_file.get("upnpd.conf", [])
+    # The port-number key (WAN_TELNET_ACCESS_PORT=2323) also contains
+    # "telnet" but its value isn't truthy, and the real flag is 0 here --
+    # must not fire at all for this file.
+    assert "firewall_off.cfg" not in by_file
+
+
+def test_config_audit_no_findings_on_clean_config(tmp_path):
+    from ifda.vuln.config_audit import scan_configs
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "app.conf").write_text("listen_port=8080\nlog_level=info\n")
+
+    assert scan_configs(str(tmp_path)) == []
+
+
 def test_cyclonedx_sbom():
     from ifda.report.sbom import render_cyclonedx
     import json

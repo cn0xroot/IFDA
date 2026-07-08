@@ -332,9 +332,43 @@ func (a *API) getComponents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getFiles serves one page of the files table, like the other pagedList-
+// backed endpoints, but doesn't go through pagedList itself: it's the only
+// one of the four with a server-side filter (?kind=), so it needs its own
+// ListFiles/ListFilesAll pair rather than the generic table-name-only
+// list()/listAllRaw() signature the others share.
 func (a *API) getFiles(w http.ResponseWriter, r *http.Request) {
-	a.pagedList(w, r, "files", func(jobID string, offset, limit int) ([]json.RawMessage, int, error) {
-		return a.reportDB.ListFiles(jobID, offset, limit)
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted {
+		writeErr(w, http.StatusConflict, "report not ready (job "+string(job.Status)+")")
+		return
+	}
+	q := r.URL.Query()
+	kind := q.Get("kind")
+	if q.Get("all") == "1" {
+		items, err := a.reportDB.ListFilesAll(job.ID, kind)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items": rawItemsOrEmpty(items), "total": len(items), "offset": 0, "limit": len(items),
+		})
+		return
+	}
+	offset := atoiDefault(q.Get("offset"), 0)
+	limit := atoiDefault(q.Get("limit"), 500)
+	items, total, err := a.reportDB.ListFiles(job.ID, kind, offset, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": rawItemsOrEmpty(items), "total": total, "offset": offset, "limit": limit,
 	})
 }
 

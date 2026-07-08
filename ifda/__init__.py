@@ -10,4 +10,4 @@ binutils). A separate service/orchestration layer (Go) is intended to drive this
 core for batch/corpus work — see README.
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"

@@ -117,7 +117,7 @@ func (r *ReportDB) migrate() error {
 		// binaries/recognized scripts subset -- what actually answers "did
 		// the scan cover this whole directory" for a human looking at results.
 		`CREATE TABLE IF NOT EXISTS files (
-			job_id TEXT, path TEXT, data TEXT,
+			job_id TEXT, path TEXT, kind TEXT, data TEXT,
 			PRIMARY KEY (job_id, path)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_job ON files(job_id)`,
@@ -128,14 +128,25 @@ func (r *ReportDB) migrate() error {
 		}
 	}
 
-	// CREATE TABLE IF NOT EXISTS above only adds busybox_audit for a brand
-	// new database file; a database created before this column existed
-	// needs an explicit ALTER TABLE. SQLite has no "ADD COLUMN IF NOT
-	// EXISTS", so just ignore the "duplicate column" error a database that
-	// already has it produces.
-	if _, err := r.db.Exec(`ALTER TABLE report_meta ADD COLUMN busybox_audit TEXT`); err != nil &&
-		!strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("migrate: add busybox_audit column: %w", err)
+	// CREATE TABLE IF NOT EXISTS above only adds new columns for a brand new
+	// database file; a database created before a column existed needs an
+	// explicit ALTER TABLE. SQLite has no "ADD COLUMN IF NOT EXISTS", so
+	// just ignore the "duplicate column" error a database that already has
+	// it produces. Must run before idx_files_job_kind below -- that index
+	// depends on the "kind" column existing, which for an upgraded (not
+	// brand new) database is only true after this ALTER TABLE runs.
+	alters := []string{
+		`ALTER TABLE report_meta ADD COLUMN busybox_audit TEXT`,
+		`ALTER TABLE files ADD COLUMN kind TEXT`,
+	}
+	for _, s := range alters {
+		if _, err := r.db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migrate: %s: %w", s, err)
+		}
+	}
+
+	if _, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_files_job_kind ON files(job_id, kind)`); err != nil {
+		return fmt.Errorf("migrate: create idx_files_job_kind: %w", err)
 	}
 	return nil
 }
@@ -240,14 +251,15 @@ func (r *ReportDB) Ingest(jobID string, reportJSON []byte, triageOverlay map[str
 		}
 	}
 
-	fileStmt, err := tx.Prepare(`INSERT OR REPLACE INTO files (job_id, path, data) VALUES (?, ?, ?)`)
+	fileStmt, err := tx.Prepare(`INSERT OR REPLACE INTO files (job_id, path, kind, data) VALUES (?, ?, ?, ?)`)
 	if err != nil {
 		return
 	}
 	defer fileStmt.Close()
 	for _, f := range rep.Files {
 		path := jsonStringField(f, "path")
-		if _, err = fileStmt.Exec(jobID, path, string(f)); err != nil {
+		kind := jsonStringField(f, "kind")
+		if _, err = fileStmt.Exec(jobID, path, kind, string(f)); err != nil {
 			return
 		}
 	}
@@ -338,7 +350,7 @@ func (r *ReportDB) CopyJob(fromID, toID string) error {
 		{"binaries", "path, data"},
 		{"scripts", "path, data"},
 		{"components", "seq, data"},
-		{"files", "path, data"},
+		{"files", "path, kind, data"},
 	}
 	for _, s := range stmts {
 		q := fmt.Sprintf(`INSERT INTO %s (job_id, %s) SELECT ?, %s FROM %s WHERE job_id = ?`,
@@ -605,8 +617,66 @@ func (r *ReportDB) ListComponents(jobID string, offset, limit int) ([]json.RawMe
 	return paginateRaw(r.db, "components", jobID, offset, limit)
 }
 
-func (r *ReportDB) ListFiles(jobID string, offset, limit int) ([]json.RawMessage, int, error) {
-	return paginateRaw(r.db, "files", jobID, offset, limit)
+// ListFiles returns one page of the `files` table, optionally restricted to
+// a single `kind` ("" = every kind). kind is its own column (extracted from
+// each entry's JSON at Ingest, see jsonStringField(f, "kind") in Ingest)
+// specifically so this is a plain indexed SQL WHERE, not a per-row JSON
+// decode -- lets the Files tab's Kind filter (All/Binary/Script/Config/
+// Symlink/Other) work without loading every row to filter client-side.
+func (r *ReportDB) ListFiles(jobID, kind string, offset, limit int) ([]json.RawMessage, int, error) {
+	where := "job_id = ?"
+	args := []any{jobID}
+	if kind != "" {
+		where += " AND kind = ?"
+		args = append(args, kind)
+	}
+	var total int
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM files WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	rows, err := r.db.Query(`SELECT data FROM files WHERE `+where+` ORDER BY path LIMIT ? OFFSET ?`,
+		append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []json.RawMessage
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, json.RawMessage(data))
+	}
+	return out, total, nil
+}
+
+// ListFilesAll is ListFiles' "?all=1" counterpart: every matching row, no
+// LIMIT at all (same "export must mean everything" reasoning as listAllRaw).
+func (r *ReportDB) ListFilesAll(jobID, kind string) ([]json.RawMessage, error) {
+	where := "job_id = ?"
+	args := []any{jobID}
+	if kind != "" {
+		where += " AND kind = ?"
+		args = append(args, kind)
+	}
+	rows, err := r.db.Query(`SELECT data FROM files WHERE `+where+` ORDER BY path`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []json.RawMessage
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		out = append(out, json.RawMessage(data))
+	}
+	return out, nil
 }
 
 // FileKnown reports whether path was recorded as one of jobID's scanned

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -187,6 +188,91 @@ func TestFileKnown(t *testing.T) {
 	}
 	if known {
 		t.Error("FileKnown must be job-scoped -- a different job's path match must not count")
+	}
+}
+
+// The Files tab's Kind filter (All/Binary/Script/Config/Symlink/Other) is a
+// plain SQL WHERE on the files table's own "kind" column (extracted from
+// each entry's JSON at Ingest), not a client-side filter over every row --
+// this is the query path that backs it.
+func TestListFilesByKind(t *testing.T) {
+	db, err := NewReportDB(filepath.Join(t.TempDir(), "reports.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := []byte(`{
+		"target": "/fw", "tool_version": "test", "generated_at": "now",
+		"binaries": [], "scripts": [], "components": [], "findings": [],
+		"files": [
+			{"path": "/fw/etc/dnsmasq.conf", "kind": "config", "size": 5, "md5": "a"},
+			{"path": "/fw/etc/config/dhcp", "kind": "config", "size": 5, "md5": "b"},
+			{"path": "/fw/bin/busybox", "kind": "binary", "size": 5, "md5": "c"},
+			{"path": "/fw/bin/sh", "kind": "symlink", "size": 0, "md5": ""}
+		]
+	}`)
+	if _, _, _, err := db.Ingest("job-1", reportJSON, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	items, total, err := db.ListFiles("job-1", "config", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Errorf("kind=config: total=%d len(items)=%d, want 2/2", total, len(items))
+	}
+
+	items, total, err = db.ListFiles("job-1", "", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 4 || len(items) != 4 {
+		t.Errorf("kind='' (all): total=%d len(items)=%d, want 4/4", total, len(items))
+	}
+
+	all, err := db.ListFilesAll("job-1", "binary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Errorf("ListFilesAll(kind=binary) = %d rows, want 1", len(all))
+	}
+}
+
+// Regression: a database created before the files.kind column existed (an
+// upgrade, not a fresh install) must not fail to open -- migrate()'s ALTER
+// TABLE has to run before the index that depends on the column, and ignore
+// the "duplicate column" error a database that already has it produces.
+func TestMigrateAddsFilesKindColumnToExistingDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reports.db")
+
+	// Simulate a pre-upgrade database: files table without a kind column.
+	pre, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pre.Exec(`CREATE TABLE files (job_id TEXT, path TEXT, data TEXT, PRIMARY KEY (job_id, path))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pre.Exec(`INSERT INTO files (job_id, path, data) VALUES (?, ?, ?)`,
+		"job-1", "/fw/etc/x.conf", `{"path":"/fw/etc/x.conf","kind":"config"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := pre.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// NewReportDB's migrate() must add the column (and its index) without error.
+	db, err := NewReportDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewReportDB on a pre-upgrade database failed: %v", err)
+	}
+	items, total, err := db.ListFiles("job-1", "", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Errorf("total=%d len(items)=%d, want 1/1 (old row survives the upgrade)", total, len(items))
 	}
 }
 
