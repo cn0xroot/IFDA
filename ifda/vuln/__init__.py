@@ -5,6 +5,7 @@ from .taint import detect_taint_paths
 from .cve import correlate_cves
 from .cve_bin_tool import cve_bin_tool_available, scan_target
 from .findings import prioritize, TriageStore
+from .backdoor import scan_backdoors
 
 __all__ = [
     "detect_dangerous_functions",
@@ -14,4 +15,5 @@ __all__ = [
     "scan_target",
     "prioritize",
     "TriageStore",
+    "scan_backdoors",
 ]

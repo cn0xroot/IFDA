@@ -73,6 +73,7 @@ class BinaryInfo:
     """Result of loading + reverse engineering a single executable/library."""
     path: str
     sha256: str
+    md5: str = ""
     format: str = "elf"
     arch: str = ""           # arm, aarch64, mips, x86, x86_64, ...
     endian: str = ""         # little | big
@@ -146,6 +147,70 @@ class ScriptInfo:
     path: str
     kind: str            # "shell" | "php" | "python" | "lua"
     findings: int = 0
+    sha256: str = ""
+    md5: str = ""
+
+
+@dataclass
+class FileEntry:
+    """One file anywhere under the scanned target (FR-INV) -- the full
+    listing that `binaries`/`scripts` alone don't give, since those only
+    cover ELF binaries and recognized shell/php/python/lua scripts
+    respectively. Everything else in a real firmware tree (configs, web
+    assets, data files, symlinks) only shows up here, which is what actually
+    answers "did the scan cover this whole directory" for a human looking at
+    the results."""
+    path: str
+    kind: str            # "binary" | "script" | "symlink" | "other"
+    size: int = 0
+    md5: str = ""
+    # Printable strings for non-ELF entries ("script"/"other"), so the UI's
+    # Strings/Sensitive-strings hunting isn't limited to ELF binaries -- config
+    # files and scripts are exactly where IoT vendors leave default creds.
+    # Empty for "binary" (already covered by BinaryInfo.strings) and "symlink"
+    # (no content of its own).
+    strings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExtraCommand:
+    """A standalone executable under a bin/sbin directory whose name isn't
+    one of this firmware's busybox's actual compiled-in applets -- either a
+    genuine vendor tool/daemon busybox never provided, or (for the "missing"
+    applet case) something that fills in for an applet this busybox build
+    was stripped of. See BusyboxAudit."""
+    path: str
+    name: str
+    kind: str            # "binary" | "symlink" | "other"
+    dir: str              # the bin/sbin directory this was found under, relative to target
+
+
+@dataclass
+class InitScript:
+    """One /etc/init.d (or vendor equivalent) script, source included so the
+    UI can show filename + code without a second round trip per file."""
+    path: str
+    content: str
+    truncated: bool = False
+
+
+@dataclass
+class BusyboxAudit:
+    """FR-INV: what this firmware's busybox build actually provides vs a
+    reference BusyBox applet list, plus what else lives in bin/sbin, plus
+    every /etc/init.d script -- three views onto "what commands does this
+    device actually have" that the ELF-only Binaries tab can't answer.
+
+    See ifda/inventory/busybox_audit.py for how each field is derived.
+    """
+    has_busybox: bool = False
+    busybox_paths: list[str] = field(default_factory=list)
+    compiled_in: list[str] = field(default_factory=list)   # reference applets found in this busybox
+    missing: list[str] = field(default_factory=list)        # reference applets NOT found ("crippled")
+    extra_commands: list[ExtraCommand] = field(default_factory=list)
+    init_scripts: list[InitScript] = field(default_factory=list)
+    truncated_extra: bool = False
+    truncated_init: bool = False
 
 
 @dataclass
@@ -167,8 +232,18 @@ class AnalysisReport:
     scripts: list[ScriptInfo] = field(default_factory=list)
     components: list[ComponentInfo] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    files: list[FileEntry] = field(default_factory=list)
+    busybox_audit: BusyboxAudit = field(default_factory=BusyboxAudit)
     tool_version: str = ""
     generated_at: str = ""
+    # Firmware-level summary (FR-INV): kernel version banner (if found
+    # anywhere in the tree), majority architecture/endianness across
+    # `binaries`, total files scanned, and total on-disk size in bytes.
+    kernel_version: str = ""
+    arch_summary: str = ""
+    endian_summary: str = ""
+    file_count: int = 0
+    firmware_size: int = 0
 
 
 def to_dict(obj) -> dict:

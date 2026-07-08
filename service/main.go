@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed web/*
@@ -53,13 +54,19 @@ func main() {
 	}
 	log.Printf("data dir: %s", dir)
 
-	store, err := NewStore(filepath.Join(dir, "jobs"))
+	analyzerVersion := detectAnalyzerVersion(coreDir)
+	log.Printf("ifda analyzer version: %q", analyzerVersion)
+	store, err := NewStore(filepath.Join(dir, "jobs"), analyzerVersion)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("loaded %d job(s) from history", len(store.List()))
-	worker := NewWorker(store, coreDir, *workers, *qlen)
+	reportDB, err := NewReportDB(filepath.Join(dir, "reports.db"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	triage := NewTriageStore(filepath.Join(dir, "triage.json"))
+	worker := NewWorker(store, coreDir, *workers, *qlen, reportDB, triage)
 	ghidra := checkGhidra(coreDir)
 	log.Printf("ghidra decompile enrichment available: %v", ghidra)
 
@@ -92,17 +99,29 @@ func main() {
 	} else {
 		log.Printf("auth disabled (-auth=false) — /api/* is open to anyone who can reach %s", *addr)
 	}
-	api := NewAPI(store, worker, triage, filepath.Join(dir, "uploads"), coreDir, ghidra, authStore)
+	api := NewAPI(store, worker, triage, reportDB, filepath.Join(dir, "uploads"), coreDir, ghidra, authStore)
 
 	mux := http.NewServeMux()
 	api.Routes(mux)
 
-	// Serve the embedded single-page frontend at /.
+	// Serve the embedded single-page frontend at /. embed.FS reports a zero
+	// ModTime for every file, so http.FileServer never emits a Last-Modified
+	// (net/http only sets it for a non-zero modtime) -- without any
+	// validator, a browser that decides to cache the response at all can
+	// end up serving it back indefinitely across restarts/rebuilds, with no
+	// conditional GET to ever notice a newer build exists. no-cache forces
+	// a revalidation round-trip on every load, so a UI fix always actually
+	// shows up on the next page load instead of possibly being invisible
+	// until the user manually hard-refreshes.
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		log.Fatal(err)
 	}
-	mux.Handle("GET /", http.FileServer(http.FS(sub)))
+	staticFS := http.FileServer(http.FS(sub))
+	mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		staticFS.ServeHTTP(w, r)
+	}))
 
 	log.Printf("ifda service listening on %s (workers=%d)", *addr, *workers)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
@@ -137,6 +156,23 @@ func checkGhidra(coreDir string) bool {
 		"import sys; from ifda.re.decompile import ghidra_available; sys.exit(0 if ghidra_available() else 1)")
 	cmd.Dir = coreDir
 	return cmd.Run() == nil
+}
+
+// detectAnalyzerVersion reads ifda.__version__ so it can be mixed into the
+// job dedup cache key (see Store.dedupKey): without this, a re-submitted,
+// byte-identical target silently reuses a report an older ifda build
+// produced, hiding any analyzer feature/fix shipped since. Empty on failure
+// (python3/ifda not importable) degrades to the old size+mtime-only key
+// rather than failing startup over it.
+func detectAnalyzerVersion(coreDir string) string {
+	cmd := exec.Command("python3", "-c", "import ifda; print(ifda.__version__)")
+	cmd.Dir = coreDir
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("warning: could not detect ifda version (dedup cache won't invalidate on analyzer upgrades): %v", err)
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func randHex(n int) string {

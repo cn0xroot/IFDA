@@ -75,6 +75,9 @@ def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmRes
     md_thumb = None
     arm_mapping: list[tuple[int, str]] = []
     thumb_funcs: set[int] = set()
+    # For stripped ARM (no $a/$t mapping symbols), the whole-section default
+    # ARM/Thumb mode we detect from the code itself.
+    arm_default_thumb = False
 
     result = DisasmResult()
     with open(path, "rb") as fh:
@@ -90,6 +93,12 @@ def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmRes
             md_thumb.detail = True
             arm_mapping = _arm_mapping(elf)
             thumb_funcs = _thumb_functions(elf)
+            if not arm_mapping:
+                text = elf.get_section_by_name(".text")
+                if text is not None and text["sh_size"]:
+                    arm_default_thumb = _detect_arm_default_thumb(
+                        md, md_thumb, text.data(), text["sh_addr"]
+                    )
 
         addr_to_name = _defined_functions(elf, mask_thumb=is_arm)
         if is_arm:
@@ -106,8 +115,26 @@ def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmRes
             )
         imports = set(info.imports)
 
-        # Function ranges: prefer symbols; fall back to executable sections.
-        ranges = _function_ranges(elf, addr_to_name, mask_thumb=is_arm)
+        # Function ranges: symbol-defined entries plus entries discovered from
+        # direct-call targets (the latter recovers functions in stripped
+        # binaries, where symbols cover almost nothing — otherwise the whole
+        # .text collapses into one giant pseudo-function). Fall back to one
+        # pseudo-function per section only if discovery finds nothing at all.
+        regions = _exec_regions(elf)
+        sym_ranges = _function_ranges(elf, addr_to_name, mask_thumb=is_arm)
+        entries = {a for a, _, _ in sym_ranges}
+        trusted_bodies = _symbol_bodies(elf, mask_thumb=is_arm)
+        entries |= _discover_entries(
+            elf, md, md_thumb, is_arm, arm_mapping, arm_default_thumb,
+            regions, trusted_bodies
+        )
+        ep = elf.header["e_entry"]
+        if ep:
+            if is_arm:
+                ep &= ~1
+            if _in_regions(ep, regions):
+                entries.add(ep)
+        ranges = _build_ranges(entries, addr_to_name, regions)
         if not ranges:
             ranges = _linear_ranges(elf)
 
@@ -120,10 +147,18 @@ def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmRes
                 mips.reset(start)
             if arm_res:
                 arm_res.reset(start)
-            if is_arm:
+            if is_arm and arm_mapping:
                 insns = _iter_arm_insns(
                     md, md_thumb, code, start, arm_mapping, start in thumb_funcs
                 )
+            elif is_arm:
+                # Stripped: no mapping symbols. Sweep the body in the detected
+                # section mode, skipping literal pools so a data word mid-body
+                # doesn't cut the function's call sites short.
+                engine = md_thumb if arm_default_thumb else md
+                insns = ((i, arm_default_thumb)
+                         for i in _robust_disasm(engine, code, start,
+                                                 2 if arm_default_thumb else 4))
             else:
                 insns = ((i, False) for i in md.disasm(code, start))
             for insn, is_thumb in insns:
@@ -230,11 +265,155 @@ def _function_ranges(elf, addr_to_name, mask_thumb: bool = False) -> list[tuple[
 
 
 def _linear_ranges(elf) -> list[tuple[int, int, str]]:
-    """Stripped fallback: one pseudo-function per executable section."""
+    """Last-resort fallback: one pseudo-function per executable section. Only
+    reached when function discovery finds nothing at all (see _discover_*)."""
     ranges = []
     for sec in elf.iter_sections():
         if sec["sh_flags"] & 0x4 and sec["sh_size"]:  # SHF_EXECINSTR
             ranges.append((sec["sh_addr"], sec["sh_size"], f"sub_{sec['sh_addr']:x}"))
+    return ranges
+
+
+def _exec_regions(elf) -> list[tuple[int, int]]:
+    """(start, end) of each executable, non-NOBITS section."""
+    out = []
+    for sec in elf.iter_sections():
+        if sec["sh_flags"] & 0x4 and sec["sh_size"] and sec["sh_type"] != "SHT_NOBITS":
+            out.append((sec["sh_addr"], sec["sh_addr"] + sec["sh_size"]))
+    return out
+
+
+def _in_regions(addr: int, regions: list[tuple[int, int]]) -> bool:
+    return any(lo <= addr < hi for lo, hi in regions)
+
+
+def _robust_disasm(engine, code: bytes, start: int, step: int):
+    """Linear sweep that skips undecodable bytes (literal pools / data embedded
+    in stripped code) instead of stopping at the first one, so a single bad word
+    doesn't truncate the rest of the section."""
+    pos = 0
+    n = len(code)
+    while pos < n:
+        advanced = False
+        for insn in engine.disasm(code[pos:], start + pos):
+            yield insn
+            pos = insn.address + insn.size - start
+            advanced = True
+        if not advanced:
+            pos += step
+
+
+def _detect_arm_default_thumb(md_arm, md_thumb, code: bytes, start: int) -> bool:
+    """Stripped ARM binaries drop the $a/$t mapping symbols, so ARM vs Thumb
+    can't be read from metadata. Decode the section both ways and pick whichever
+    covers more bytes with valid instructions (Thumb-heavy armhf firmware would
+    otherwise be misdecoded as ARM and yield garbage)."""
+    def coverage(engine, step):
+        return sum(insn.size for insn in _robust_disasm(engine, code, start, step))
+    return coverage(md_thumb, 2) > coverage(md_arm, 4)
+
+
+def _is_prologue(insn) -> bool:
+    """True if `insn` is a function-entry prologue that saves the return
+    address: `push {..., lr}` (ARM/Thumb) or `stmfd sp!, {..., lr}`. Compilers
+    emit this as the first instruction of any non-leaf function, so its address
+    is a function entry — this recovers functions never reached by a direct
+    call (invoked through pointers, callbacks, jump tables)."""
+    m = insn.mnemonic
+    if m in ("push", "push.w"):
+        return "lr" in insn.op_str
+    if m in ("stmfd", "stmdb") and "sp!" in insn.op_str and "lr" in insn.op_str:
+        return True
+    return False
+
+
+def _symbol_bodies(elf, mask_thumb: bool = False) -> list[tuple[int, int]]:
+    """(start, end) of every STT_FUNC symbol with a known nonzero size — the
+    function extents we can *trust*. Used to reject prologue candidates that
+    fall inside a real function (a data word or mid-body instruction misread as
+    `push {…, lr}` would otherwise split a symboled function in two)."""
+    out = []
+    for sec in elf.iter_sections():
+        if isinstance(sec, SymbolTableSection):
+            for sym in sec.iter_symbols():
+                if (
+                    sym.name
+                    and sym["st_info"]["type"] == "STT_FUNC"
+                    and sym["st_shndx"] != "SHN_UNDEF"
+                    and sym["st_value"]
+                    and sym["st_size"] > 0
+                ):
+                    addr = sym["st_value"] & ~1 if mask_thumb else sym["st_value"]
+                    out.append((addr, addr + sym["st_size"]))
+    out.sort()
+    return out
+
+
+def _inside_body(addr: int, bodies: list[tuple[int, int]]) -> bool:
+    """True if addr is strictly inside some trusted body (start < addr < end).
+    An addr equal to a body start is a legitimate entry, not 'inside'."""
+    import bisect
+    if not bodies:
+        return False
+    i = bisect.bisect_right([b[0] for b in bodies], addr) - 1
+    return i >= 0 and bodies[i][0] < addr < bodies[i][1]
+
+
+def _discover_entries(elf, md, md_thumb, is_arm, arm_mapping,
+                      default_thumb, regions, trusted_bodies) -> set[int]:
+    """Recover function entries the symbol table lost (stripped binaries), from
+    a single robust linear sweep of the executable sections that collects both:
+      * direct-call targets — a bl/call target is by definition a function entry
+        (IDA's recursive traversal), and
+      * prologue instructions — `push {..., lr}` starts of functions that are
+        never the target of a direct call.
+    The sweep already reaches every code byte, so one pass covers both."""
+    entries: set[int] = set()
+    for sec in elf.iter_sections():
+        if not (sec["sh_flags"] & 0x4 and sec["sh_size"]) or sec["sh_type"] == "SHT_NOBITS":
+            continue
+        code = sec.data()
+        start = sec["sh_addr"]
+        if is_arm and arm_mapping:
+            insns = (i for i, _ in _iter_arm_insns(md, md_thumb, code, start, arm_mapping, default_thumb))
+        elif is_arm:
+            engine = md_thumb if default_thumb else md
+            insns = _robust_disasm(engine, code, start, 2 if default_thumb else 4)
+        else:
+            insns = _robust_disasm(md, code, start, 4)
+        for insn in insns:
+            if _is_call(insn):
+                t = _branch_target(insn)
+                if t is None:
+                    continue
+                if is_arm:
+                    t &= ~1  # clear the Thumb bit
+                if _in_regions(t, regions):
+                    entries.add(t)
+            elif _is_prologue(insn) and not _inside_body(insn.address, trusted_bodies):
+                entries.add(insn.address)
+    return entries
+
+
+def _build_ranges(entries: set[int], addr_to_name: dict[int, str],
+                  regions: list[tuple[int, int]]) -> list[tuple[int, int, str]]:
+    """Turn a set of function entry addresses into (start, size, name) ranges,
+    each spanning to the next entry within the same executable region. Symbol
+    names win; discovered-only entries get a synthetic sub_<addr> name."""
+    def region_end(a):
+        for lo, hi in regions:
+            if lo <= a < hi:
+                return hi
+        return None
+
+    pts = sorted(e for e in entries if region_end(e) is not None)
+    ranges = []
+    for i, a in enumerate(pts):
+        end = region_end(a)
+        nxt = pts[i + 1] if i + 1 < len(pts) else end
+        size = min(nxt, end) - a
+        if size > 0:
+            ranges.append((a, size, addr_to_name.get(a, f"sub_{a:x}")))
     return ranges
 
 

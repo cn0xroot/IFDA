@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 
 from ..model import ComponentInfo, Evidence, Finding, Severity
@@ -105,9 +106,17 @@ def db_stats() -> dict[str, int]:
 def _run(target: str, timeout: int) -> list[dict]:
     with tempfile.TemporaryDirectory(prefix="ifda-cvebin-") as tmp:
         out_file = os.path.join(tmp, "report.json")
+        # Invoked via `python -c` (importing _nvd_patch for its side effect)
+        # rather than the `cve-bin-tool` console script directly, so the NVD
+        # dashboard-403 crash fix in _nvd_patch.py applies without touching
+        # the installed cve-bin-tool package on disk. `-n api2` is the
+        # maintained NVD API path; the default `json-mirror` depends on a
+        # third-party mirror with no uptime guarantee.
         cmd = [
-            "cve-bin-tool", "-f", "json", "--detailed", "-o", out_file,
-            "-u", "daily", "--disable-version-check", target,
+            sys.executable, "-c",
+            "import ifda.vuln._nvd_patch; from cve_bin_tool.cli import main; import sys; sys.exit(main())",
+            "-f", "json", "--detailed", "-o", out_file,
+            "-u", "daily", "-n", "api2", "--disable-version-check", target,
         ]
         # Deliberately no -q: in cve-bin-tool 3.4, -q suppresses the JSON
         # report write itself (not just console logging), silently leaving

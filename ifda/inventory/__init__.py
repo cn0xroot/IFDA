@@ -1,5 +1,9 @@
-"""Inventory & classification (FR-INV). Currently: embedded secrets/credentials."""
+"""Inventory & classification (FR-INV): embedded secrets/credentials plus
+firmware-level metadata (kernel version, file count/size, arch/endian summary)."""
 
 from .secrets import scan_secrets
+from .firmware_meta import detect_kernel_version, scan_tree_stats, summarize_arch_endian, list_all_files
+from .busybox_audit import audit_busybox
 
-__all__ = ["scan_secrets"]
+__all__ = ["scan_secrets", "detect_kernel_version", "scan_tree_stats", "summarize_arch_endian",
+           "list_all_files", "audit_busybox"]

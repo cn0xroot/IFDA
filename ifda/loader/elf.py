@@ -35,11 +35,18 @@ _MACHINE = {
 
 
 def sha256_file(path: str) -> str:
-    h = hashlib.sha256()
+    return file_hashes(path)[0]
+
+
+def file_hashes(path: str) -> tuple[str, str]:
+    """Return (sha256, md5) hex digests, reading the file once for both."""
+    h256 = hashlib.sha256()
+    h_md5 = hashlib.md5()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+            h256.update(chunk)
+            h_md5.update(chunk)
+    return h256.hexdigest(), h_md5.hexdigest()
 
 
 def is_elf(path: str) -> bool:
@@ -61,8 +68,11 @@ def _detect_libc(imports: list[str], strings: list[str]) -> str:
     return ""
 
 
-def _extract_strings(data: bytes, min_len: int = 4) -> list[str]:
-    """Printable-ASCII run extraction (FR-RE-6 backing for string xrefs)."""
+def extract_strings(data: bytes, min_len: int = 4) -> list[str]:
+    """Printable-ASCII run extraction (FR-RE-6 backing for string xrefs).
+
+    Generic over any byte content, not ELF-specific -- reused by the
+    inventory stage to pull strings out of scripts/config files too."""
     out: list[str] = []
     cur = bytearray()
     for b in data:
@@ -78,7 +88,8 @@ def _extract_strings(data: bytes, min_len: int = 4) -> list[str]:
 
 
 def load_elf(path: str, max_strings: int = 5000) -> BinaryInfo:
-    info = BinaryInfo(path=path, sha256=sha256_file(path))
+    sha256, md5 = file_hashes(path)
+    info = BinaryInfo(path=path, sha256=sha256, md5=md5)
 
     with open(path, "rb") as fh:
         try:
@@ -101,7 +112,7 @@ def load_elf(path: str, max_strings: int = 5000) -> BinaryInfo:
         # Strings: pull from the whole file (cheap, catches .rodata + data).
         fh.seek(0)
         data = fh.read()
-        info.strings = _extract_strings(data)[:max_strings]
+        info.strings = extract_strings(data)[:max_strings]
         info.libc = _detect_libc(info.imports, info.strings)
 
     return info

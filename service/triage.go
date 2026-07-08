@@ -84,6 +84,20 @@ func (t *TriageStore) Set(findingID, state, actor string) bool {
 	return true
 }
 
+// Snapshot returns a copy of the current finding-id -> state map, for
+// ReportDB.Ingest to apply as an overlay so a triage decision made against an
+// earlier scan of the same content (same fingerprint id) is immediately
+// reflected on ingest rather than reverting to "new".
+func (t *TriageStore) Snapshot() map[string]string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	out := make(map[string]string, len(t.state))
+	for k, v := range t.state {
+		out[k] = v
+	}
+	return out
+}
+
 // History returns audit-log events, newest first. If findingID is non-empty,
 // only that finding's events are returned.
 func (t *TriageStore) History(findingID string) []TriageEvent {
@@ -130,36 +144,4 @@ func (t *TriageStore) appendLog(ev TriageEvent) {
 	defer f.Close()
 	f.Write(data)
 	f.Write([]byte("\n"))
-}
-
-// Overlay rewrites each finding's "triage" field from the store, by id, so the
-// served report reflects analyst decisions without re-running analysis.
-func (t *TriageStore) Overlay(reportJSON []byte) []byte {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if len(t.state) == 0 {
-		return reportJSON
-	}
-	var doc map[string]json.RawMessage
-	if json.Unmarshal(reportJSON, &doc) != nil {
-		return reportJSON
-	}
-	var findings []map[string]interface{}
-	if json.Unmarshal(doc["findings"], &findings) != nil {
-		return reportJSON
-	}
-	for _, f := range findings {
-		if id, ok := f["id"].(string); ok {
-			if st, ok := t.state[id]; ok {
-				f["triage"] = st
-			}
-		}
-	}
-	if nf, err := json.Marshal(findings); err == nil {
-		doc["findings"] = nf
-	}
-	if out, err := json.Marshal(doc); err == nil {
-		return out
-	}
-	return reportJSON
 }

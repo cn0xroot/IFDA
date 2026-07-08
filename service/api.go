@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +20,7 @@ type API struct {
 	store     *Store
 	worker    *Worker
 	triage    *TriageStore
+	reportDB  *ReportDB
 	uploadDir string
 	coreDir   string        // repo root containing the ifda package (for static reference data like vuln_db.json)
 	ghidra    bool          // whether the core's Ghidra decompile enrichment is usable
@@ -26,8 +28,8 @@ type API struct {
 	captcha   *CaptchaStore // only meaningful when authStore != nil
 }
 
-func NewAPI(store *Store, worker *Worker, triage *TriageStore, uploadDir, coreDir string, ghidra bool, authStore *AuthStore) *API {
-	return &API{store: store, worker: worker, triage: triage, uploadDir: uploadDir, coreDir: coreDir, ghidra: ghidra,
+func NewAPI(store *Store, worker *Worker, triage *TriageStore, reportDB *ReportDB, uploadDir, coreDir string, ghidra bool, authStore *AuthStore) *API {
+	return &API{store: store, worker: worker, triage: triage, reportDB: reportDB, uploadDir: uploadDir, coreDir: coreDir, ghidra: ghidra,
 		authStore: authStore, captcha: NewCaptchaStore()}
 }
 
@@ -64,6 +66,15 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs", a.auth(a.listJobs))
 	mux.HandleFunc("GET /api/jobs/{id}", a.auth(a.getJob))
 	mux.HandleFunc("GET /api/jobs/{id}/report", a.auth(a.getReport))
+	mux.HandleFunc("GET /api/jobs/{id}/summary", a.auth(a.getSummary))
+	mux.HandleFunc("GET /api/jobs/{id}/findings", a.auth(a.getFindings))
+	mux.HandleFunc("GET /api/jobs/{id}/binaries", a.auth(a.getBinaries))
+	mux.HandleFunc("GET /api/jobs/{id}/binary", a.auth(a.getBinary))
+	mux.HandleFunc("GET /api/jobs/{id}/scripts", a.auth(a.getScripts))
+	mux.HandleFunc("GET /api/jobs/{id}/components", a.auth(a.getComponents))
+	mux.HandleFunc("GET /api/jobs/{id}/files", a.auth(a.getFiles))
+	mux.HandleFunc("GET /api/jobs/{id}/file-content", a.auth(a.getFileContent))
+	mux.HandleFunc("GET /api/jobs/{id}/busybox", a.auth(a.getBusyboxAudit))
 	mux.HandleFunc("GET /api/jobs/{id}/events", a.auth(a.events))
 	mux.HandleFunc("POST /api/jobs/{id}/triage", a.auth(a.setTriage))
 	mux.HandleFunc("POST /api/jobs/{id}/pause", a.auth(a.pauseJob))
@@ -224,9 +235,12 @@ func (a *API) getReport(w http.ResponseWriter, r *http.Request) {
 		serveFile(w, job.sbomPath, "application/json",
 			"ifda-"+job.ID+".sbom.json")
 	default:
-		data, err := os.ReadFile(job.reportPath)
+		// Full-document export only (download link) — the interactive UI
+		// uses /summary + the paginated /findings, /binaries, /scripts,
+		// /components endpoints below instead of ever loading this at once.
+		data, err := a.reportDB.ExportFull(job.ID)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "report file unavailable")
+			writeErr(w, http.StatusInternalServerError, "report unavailable: "+err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -234,8 +248,283 @@ func (a *API) getReport(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Disposition",
 				`attachment; filename="ifda-`+job.ID+`.json"`)
 		}
-		w.Write(a.triage.Overlay(data))
+		w.Write(data)
 	}
+}
+
+// getSummary is the lightweight, always-fully-loaded aggregate the dashboard
+// renders from (counts by severity/vuln-class, totals) — safe to load in
+// full regardless of how large the underlying scan was.
+func (a *API) getSummary(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted {
+		writeErr(w, http.StatusConflict, "report not ready (job "+string(job.Status)+")")
+		return
+	}
+	summary, err := a.reportDB.GetSummary(job.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// getFindings serves one page of findings, filtered/sorted server-side —
+// replacing the old approach of shipping every finding to the browser and
+// filtering with Alpine reactivity, which is what crashed the tab on a scan
+// with thousands of findings.
+//
+// Query params: offset, limit, sev (repeatable), vclass, triage, min_conf, q,
+// sort, all (all=1 returns every matching row with no LIMIT at all — for the
+// "export filtered" buttons, which must mean *every* match, not just a page).
+func (a *API) getFindings(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted {
+		writeErr(w, http.StatusConflict, "report not ready (job "+string(job.Status)+")")
+		return
+	}
+	q := r.URL.Query()
+	minConf, _ := strconv.ParseFloat(q.Get("min_conf"), 64)
+	fq := FindingQuery{
+		Offset:     atoiDefault(q.Get("offset"), 0),
+		Limit:      atoiDefault(q.Get("limit"), 100),
+		NoLimit:    q.Get("all") == "1",
+		Severities: q["sev"],
+		VulnClass:  q.Get("vclass"),
+		Triage:     q.Get("triage"),
+		MinConf:    minConf,
+		Q:          q.Get("q"),
+		Sort:       q.Get("sort"),
+	}
+	items, total, err := a.reportDB.ListFindings(job.ID, fq)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": itemsOrEmpty(items), "total": total, "offset": fq.Offset, "limit": fq.Limit,
+	})
+}
+
+func (a *API) getBinaries(w http.ResponseWriter, r *http.Request) {
+	a.pagedList(w, r, "binaries", func(jobID string, offset, limit int) ([]json.RawMessage, int, error) {
+		return a.reportDB.ListBinaries(jobID, offset, limit)
+	})
+}
+
+func (a *API) getScripts(w http.ResponseWriter, r *http.Request) {
+	a.pagedList(w, r, "scripts", func(jobID string, offset, limit int) ([]json.RawMessage, int, error) {
+		return a.reportDB.ListScripts(jobID, offset, limit)
+	})
+}
+
+func (a *API) getComponents(w http.ResponseWriter, r *http.Request) {
+	a.pagedList(w, r, "components", func(jobID string, offset, limit int) ([]json.RawMessage, int, error) {
+		return a.reportDB.ListComponents(jobID, offset, limit)
+	})
+}
+
+func (a *API) getFiles(w http.ResponseWriter, r *http.Request) {
+	a.pagedList(w, r, "files", func(jobID string, offset, limit int) ([]json.RawMessage, int, error) {
+		return a.reportDB.ListFiles(jobID, offset, limit)
+	})
+}
+
+// filePreviewCap bounds how much of a file the Files tab's preview reads --
+// generous for a config/script (the only kinds the UI offers preview for)
+// while not letting a request against a mislabeled multi-GB "other" file
+// block a worker goroutine reading it into memory.
+const filePreviewCap = 256 * 1024
+
+// getFileContent serves one file's raw content for the Files tab's preview
+// (config files, shell scripts, ...) on demand -- not baked into the report
+// at scan time, which would bloat storage for the thousands of files most
+// scans have and nobody ever opens. Reads directly from the original
+// scanned target on disk, so it only works as long as that tree is still
+// there, the same assumption re-scanning/the dedup cache already makes.
+func (a *API) getFileContent(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted {
+		writeErr(w, http.StatusConflict, "report not ready (job "+string(job.Status)+")")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeErr(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	// Only a path the scan itself already recorded for this job is
+	// readable here -- never an arbitrary server-side path a caller might
+	// otherwise be able to pass in.
+	known, err := a.reportDB.FileKnown(job.ID, path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !known {
+		writeErr(w, http.StatusNotFound, "not a file recorded for this job's scan")
+		return
+	}
+	content, truncated, err := readFilePreview(path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError,
+			"could not read file (it may have moved or been deleted since scanning): "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"content": content, "truncated": truncated})
+}
+
+// readFilePreview reads up to filePreviewCap bytes of path, refusing
+// anything that isn't a plain regular file -- the same "never open a device
+// node/FIFO/socket" rule every reader in the Python core already follows,
+// here so a preview request can't be used to block on e.g. /dev/console.
+func readFilePreview(path string) (content string, truncated bool, err error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return "", false, err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", false, fmt.Errorf("not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	buf := make([]byte, filePreviewCap+1)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return "", false, err
+	}
+	truncated = n > filePreviewCap
+	if truncated {
+		n = filePreviewCap
+	}
+	return string(buf[:n]), truncated, nil
+}
+
+// getBusyboxAudit serves the busybox-applet audit + bin/sbin extra-command
+// list + /etc/init.d script dump whole (see ReportDB.GetBusyboxAudit) --
+// small enough that, unlike findings/files, it never needed pagination.
+func (a *API) getBusyboxAudit(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted {
+		writeErr(w, http.StatusConflict, "report not ready (job "+string(job.Status)+")")
+		return
+	}
+	data, err := a.reportDB.GetBusyboxAudit(job.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
+// pagedList serves one page of table's rows, or (with ?all=1) every row —
+// same "export must mean everything" reasoning as getFindings' `all` param:
+// a firmware with more files/binaries than the normal page-size cap would
+// otherwise have its listing silently truncated.
+func (a *API) pagedList(w http.ResponseWriter, r *http.Request, table string, list func(jobID string, offset, limit int) ([]json.RawMessage, int, error)) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted {
+		writeErr(w, http.StatusConflict, "report not ready (job "+string(job.Status)+")")
+		return
+	}
+	q := r.URL.Query()
+	if q.Get("all") == "1" {
+		items, err := listAllRaw(a.reportDB.db, table, job.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items": rawItemsOrEmpty(items), "total": len(items), "offset": 0, "limit": len(items),
+		})
+		return
+	}
+	offset := atoiDefault(q.Get("offset"), 0)
+	limit := atoiDefault(q.Get("limit"), 500)
+	items, total, err := list(job.ID, offset, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": rawItemsOrEmpty(items), "total": total, "offset": offset, "limit": limit,
+	})
+}
+
+// getBinary returns one binary's full record (including its potentially
+// large strings/functions arrays) by path (?path=), for the strings-tab
+// drill-down from the (deliberately lighter) paginated binaries list.
+func (a *API) getBinary(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeErr(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	data, err := a.reportDB.GetBinary(job.ID, path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if data == nil {
+		writeErr(w, http.StatusNotFound, "binary not found in this report")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
+func atoiDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func itemsOrEmpty(v []map[string]any) []map[string]any {
+	if v == nil {
+		return []map[string]any{}
+	}
+	return v
+}
+
+func rawItemsOrEmpty(v []json.RawMessage) []json.RawMessage {
+	if v == nil {
+		return []json.RawMessage{}
+	}
+	return v
 }
 
 type triageReq struct {
@@ -257,6 +546,14 @@ func (a *API) setTriage(w http.ResponseWriter, r *http.Request) {
 	if !a.triage.Set(req.FindingID, req.State, strings.TrimSpace(req.Actor)) {
 		writeErr(w, http.StatusBadRequest,
 			"invalid finding_id or state (new|confirmed|false_positive|accepted_risk)")
+		return
+	}
+	// Applies across every job whose findings include this fingerprint id
+	// (FR-VUL-8: a decision persists across re-scans of the same content),
+	// so SQL stays the single source of truth for future paginated reads
+	// instead of needing a serve-time overlay pass.
+	if err := a.reportDB.SetTriageEverywhere(req.FindingID, req.State); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -313,6 +610,7 @@ func (a *API) deleteJob(w http.ResponseWriter, r *http.Request) {
 	err := a.store.Delete(id)
 	switch {
 	case err == nil:
+		a.reportDB.DeleteJob(id)
 		writeJSON(w, http.StatusOK, map[string]string{"id": id})
 	case errors.Is(err, ErrJobNotFound):
 		writeErr(w, http.StatusNotFound, "job not found")
@@ -341,6 +639,7 @@ func (a *API) batchDeleteJobs(w http.ResponseWriter, r *http.Request) {
 		if err := a.store.Delete(id); err != nil {
 			results[id] = err.Error()
 		} else {
+			a.reportDB.DeleteJob(id)
 			results[id] = "deleted"
 		}
 	}

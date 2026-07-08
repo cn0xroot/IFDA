@@ -10,8 +10,8 @@ import datetime
 import os
 
 from . import __version__
-from .model import AnalysisReport, BinaryInfo, ScriptInfo, ComponentInfo
-from .loader import is_elf, load_elf
+from .model import AnalysisReport, BinaryInfo, ScriptInfo, ComponentInfo, FileEntry
+from .loader import is_elf, load_elf, file_hashes
 from .re import detect_mitigations, disassemble
 from .vuln import (
     detect_dangerous_functions,
@@ -21,12 +21,21 @@ from .vuln import (
     scan_target as cve_bin_tool_scan,
     prioritize,
     TriageStore,
+    scan_backdoors,
 )
 from .vuln.cve import extract_sbom
 from .vuln.crossbinary import detect_cross_binary_taint
-from .inventory import scan_secrets
+from .inventory import scan_secrets, detect_kernel_version, list_all_files, summarize_arch_endian, audit_busybox
 from .scripts import scan_scripts, scan_lang_scripts, list_scripts, list_lang_scripts
 from .fs import scan_filesystem
+
+
+def _script_info(path: str, kind: str) -> ScriptInfo:
+    try:
+        sha256, md5 = file_hashes(path)
+    except OSError:
+        sha256, md5 = "", ""
+    return ScriptInfo(path=path, kind=kind, sha256=sha256, md5=md5)
 
 
 def analyze_binary(path: str) -> tuple[BinaryInfo, list]:
@@ -170,7 +179,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     try:
         report.findings.extend(scan_scripts(target))
         for p in list_scripts(target):
-            report.scripts.append(ScriptInfo(path=p, kind="shell"))
+            report.scripts.append(_script_info(p, "shell"))
     except Exception:
         pass
 
@@ -179,7 +188,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     try:
         report.findings.extend(scan_lang_scripts(target))
         for p, lang in list_lang_scripts(target):
-            report.scripts.append(ScriptInfo(path=p, kind=lang))
+            report.scripts.append(_script_info(p, lang))
     except Exception:
         pass
 
@@ -187,6 +196,63 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     emit("filesystem", 95, "hardening checks")
     try:
         report.findings.extend(scan_filesystem(target))
+    except Exception:
+        pass
+
+    # Non-busybox command / suspected backdoor scan (FR-VUL).
+    emit("backdoor", 97, "non-busybox command scan")
+    try:
+        report.findings.extend(scan_backdoors(target))
+    except Exception:
+        pass
+
+    # Full file listing (FR-INV): the Binaries/Scripts tabs only cover ELF
+    # binaries and recognized scripts respectively, so this is what actually
+    # answers "did the scan cover this whole directory" -- every other file
+    # in the tree (configs, web assets, data files, symlinks) too. Also
+    # doubles as the source for file_count/firmware_size below (one walk of
+    # the tree, not two).
+    emit("files", 98, "building full file listing")
+    try:
+        binary_paths = {b.path for b in report.binaries}
+        script_paths = {s.path for s in report.scripts}
+        for entry in list_all_files(target, binary_paths=frozenset(binary_paths)):
+            path = entry["path"]
+            if entry["is_symlink"]:
+                kind = "symlink"
+            elif path in binary_paths:
+                kind = "binary"
+            elif path in script_paths:
+                kind = "script"
+            else:
+                kind = "other"
+            report.files.append(FileEntry(path=path, kind=kind, size=entry["size"], md5=entry["md5"],
+                                          strings=entry.get("strings") or []))
+    except Exception:
+        pass
+
+    # BusyBox applet audit + /etc/init.d script dump (FR-INV): which commands
+    # this busybox build actually compiled in vs a reference applet list
+    # ("missing" = crippled), what else lives in bin/sbin across every such
+    # directory in the tree, and every init.d script's source.
+    emit("busybox-audit", 98, "busybox applet audit")
+    try:
+        busybox_paths = [b.path for b in report.binaries if os.path.basename(b.path) == "busybox"]
+        file_kind_map = {f.path: f.kind for f in report.files}
+        report.busybox_audit = audit_busybox(target, busybox_paths, file_kind_map=file_kind_map)
+    except Exception:
+        pass
+
+    # Firmware-level summary for the dashboard (FR-INV): kernel version
+    # banner, majority arch/endian across the binaries just analyzed, and
+    # total scanned file count/size (from the listing just built above).
+    emit("firmware-meta", 99, "firmware summary")
+    try:
+        report.kernel_version = detect_kernel_version(target)
+        report.arch_summary, report.endian_summary = summarize_arch_endian(
+            [b.arch for b in report.binaries], [b.endian for b in report.binaries])
+        report.file_count = len(report.files)
+        report.firmware_size = sum(f.size for f in report.files)
     except Exception:
         pass
 

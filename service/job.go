@@ -40,21 +40,30 @@ var (
 
 // Job is one analysis task over a binary or an extracted firmware tree.
 type Job struct {
-	ID         string    `json:"id"`
-	Target     string    `json:"target"`
-	Decompile  bool      `json:"decompile"` // opt-in Ghidra pseudocode enrichment (FR-RE-2, slow)
-	Status     Status    `json:"status"`
+	ID         string     `json:"id"`
+	Target     string     `json:"target"`
+	Decompile  bool       `json:"decompile"` // opt-in Ghidra pseudocode enrichment (FR-RE-2, slow)
+	Status     Status     `json:"status"`
 	Progress   int        `json:"progress"` // 0..100
-	Stage      string    `json:"stage"`
-	Detail     string    `json:"detail"`
-	Binaries   int       `json:"binaries"`
-	Findings   int       `json:"findings"`
-	HighCrit   int       `json:"high_crit"`
-	Error      string    `json:"error,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	Stage      string     `json:"stage"`
+	Detail     string     `json:"detail"`
+	Binaries   int        `json:"binaries"`
+	Findings   int        `json:"findings"`
+	HighCrit   int        `json:"high_crit"`
+	Error      string     `json:"error,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	CacheHit   bool      `json:"cache_hit"`
+	CacheHit   bool       `json:"cache_hit"`
+	// AnalyzerVersion is the ifda.__version__ that actually produced this
+	// job's report rows (set on completion, inherited on a cache-hit copy).
+	// Store.dedupKey mixes the *currently running* version into its hash, but
+	// that alone doesn't stop a stale job from being re-indexed into the
+	// cache after an upgrade -- NewStore's load loop also checks this field
+	// against the running version before trusting a historical job as a
+	// cache-hit source, so a report produced by an older ifda build is never
+	// silently served again for a byte-identical target.
+	AnalyzerVersion string `json:"analyzer_version,omitempty"`
 	// Log is the full timestamped history of progress events (one per
 	// @@IFDA@@ line from the core), not just the latest Stage/Detail — so
 	// the web UI can show what the analyzer actually did (which binary, in
@@ -105,31 +114,40 @@ type Store struct {
 	order []string          // insertion order, oldest first
 	cache map[string]string // dedup key -> completed job id
 	seq   int
+	// analyzerVersion is mixed into dedupKey so a re-submitted, byte-identical
+	// target doesn't silently reuse a report produced by an older ifda build.
+	// Without this, shipping a new analyzer feature (e.g. the busybox_audit
+	// field) never showed up for a target that was already cached, since
+	// dedupKey only ever tracked target path + size + mtime -- exactly what
+	// happened here: a same-day re-submit of an already-scanned firmware hit
+	// the cache and CopyJob'd rows from a report that predated the new field.
+	analyzerVersion string
 }
 
 // jobRecord is the on-disk shape: Job's public fields plus the otherwise-
 // unexported report paths (proc/cancelFn are process handles, never persisted;
 // a reloaded "running" job has no process behind it anymore, see NewStore).
 type jobRecord struct {
-	ID         string     `json:"id"`
-	Target     string     `json:"target"`
-	Decompile  bool       `json:"decompile"`
-	Status     Status     `json:"status"`
-	Progress   int        `json:"progress"`
-	Stage      string     `json:"stage"`
-	Detail     string     `json:"detail"`
-	Binaries   int        `json:"binaries"`
-	Findings   int        `json:"findings"`
-	HighCrit   int        `json:"high_crit"`
-	Error      string     `json:"error,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	CacheHit   bool       `json:"cache_hit"`
-	ReportPath string     `json:"report_path,omitempty"`
-	MDPath     string     `json:"md_path,omitempty"`
-	SBOMPath   string     `json:"sbom_path,omitempty"`
-	Log        []LogEntry `json:"log,omitempty"`
+	ID              string     `json:"id"`
+	Target          string     `json:"target"`
+	Decompile       bool       `json:"decompile"`
+	Status          Status     `json:"status"`
+	Progress        int        `json:"progress"`
+	Stage           string     `json:"stage"`
+	Detail          string     `json:"detail"`
+	Binaries        int        `json:"binaries"`
+	Findings        int        `json:"findings"`
+	HighCrit        int        `json:"high_crit"`
+	Error           string     `json:"error,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	CacheHit        bool       `json:"cache_hit"`
+	AnalyzerVersion string     `json:"analyzer_version,omitempty"`
+	ReportPath      string     `json:"report_path,omitempty"`
+	MDPath          string     `json:"md_path,omitempty"`
+	SBOMPath        string     `json:"sbom_path,omitempty"`
+	Log             []LogEntry `json:"log,omitempty"`
 }
 
 func recordFromJob(j *Job) jobRecord {
@@ -138,7 +156,8 @@ func recordFromJob(j *Job) jobRecord {
 		Stage: j.Stage, Detail: j.Detail, Binaries: j.Binaries, Findings: j.Findings,
 		HighCrit: j.HighCrit, Error: j.Error, CreatedAt: j.CreatedAt,
 		StartedAt: j.StartedAt, FinishedAt: j.FinishedAt, CacheHit: j.CacheHit,
-		ReportPath: j.reportPath, MDPath: j.mdPath, SBOMPath: j.sbomPath, Log: j.Log,
+		AnalyzerVersion: j.AnalyzerVersion,
+		ReportPath:      j.reportPath, MDPath: j.mdPath, SBOMPath: j.sbomPath, Log: j.Log,
 	}
 }
 
@@ -148,7 +167,8 @@ func (r jobRecord) toJob() *Job {
 		Stage: r.Stage, Detail: r.Detail, Binaries: r.Binaries, Findings: r.Findings,
 		HighCrit: r.HighCrit, Error: r.Error, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, CacheHit: r.CacheHit,
-		reportPath: r.ReportPath, mdPath: r.MDPath, sbomPath: r.SBOMPath, Log: r.Log,
+		AnalyzerVersion: r.AnalyzerVersion,
+		reportPath:      r.ReportPath, mdPath: r.MDPath, sbomPath: r.SBOMPath, Log: r.Log,
 	}
 }
 
@@ -157,11 +177,11 @@ func (r jobRecord) toJob() *Job {
 // was queued/running/paused when the process died has no subprocess to
 // reattach to, so it's rewritten as failed ("interrupted by service
 // restart") rather than left looking like it's still in progress forever.
-func NewStore(dir string) (*Store, error) {
+func NewStore(dir, analyzerVersion string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, jobs: map[string]*Job{}, cache: map[string]string{}}
+	s := &Store{dir: dir, jobs: map[string]*Job{}, cache: map[string]string{}, analyzerVersion: analyzerVersion}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -194,8 +214,14 @@ func NewStore(dir string) (*Store, error) {
 		}
 		s.jobs[j.ID] = j
 		s.order = append(s.order, j.ID)
-		if j.Status == StatusCompleted {
-			s.cache[dedupKey(j.Target)] = j.ID // later (newer) entries win
+		// Only trust a historical job as a cache-hit source if its own
+		// recorded AnalyzerVersion matches what's running right now --
+		// otherwise, after an ifda upgrade, a resubmit of an unchanged
+		// target would still get its dedupKey computed under the new
+		// version (see dedupKey) but resolve to a job whose *rows* were
+		// produced by the old one, silently hiding whatever's new.
+		if j.Status == StatusCompleted && j.AnalyzerVersion == s.analyzerVersion {
+			s.cache[s.dedupKey(j.Target)] = j.ID // later (newer) entries win
 		}
 		if n, _, ok := strings.Cut(strings.TrimPrefix(j.ID, "job-"), "-"); ok {
 			if v, err := strconv.Atoi(n); err == nil && v > s.seq {
@@ -413,25 +439,31 @@ func (s *Store) cacheStore(key, id string) {
 	s.cache[key] = id
 }
 
-// dedupKey is target abspath + size + mtime, so a changed tree re-analyzes.
-func dedupKey(target string) string {
+// dedupKey is target abspath + size + mtime + analyzerVersion, so a changed
+// tree re-analyzes, and so does a resubmit of an unchanged tree once the
+// analyzer itself has moved on (new report fields, fixed detectors, ...) --
+// otherwise Submit's cache hit below would CopyJob rows from a report an
+// older ifda build produced, silently hiding whatever's new.
+func (s *Store) dedupKey(target string) string {
 	st, err := os.Stat(target)
 	if err != nil {
 		return target
 	}
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", target, st.Size(), st.ModTime().UnixNano())))
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d|%s", target, st.Size(), st.ModTime().UnixNano(), s.analyzerVersion)))
 	return fmt.Sprintf("%x", h[:8])
 }
 
 // Worker pool: bounded goroutines pull job ids off a channel and run the core.
 type Worker struct {
-	store   *Store
-	queue   chan string
-	coreDir string // dir containing the ifda package (cwd for the python call)
+	store    *Store
+	queue    chan string
+	coreDir  string // dir containing the ifda package (cwd for the python call)
+	reportDB *ReportDB
+	triage   *TriageStore
 }
 
-func NewWorker(store *Store, coreDir string, workers, qlen int) *Worker {
-	w := &Worker{store: store, queue: make(chan string, qlen), coreDir: coreDir}
+func NewWorker(store *Store, coreDir string, workers, qlen int, reportDB *ReportDB, triage *TriageStore) *Worker {
+	w := &Worker{store: store, queue: make(chan string, qlen), coreDir: coreDir, reportDB: reportDB, triage: triage}
 	for i := 0; i < workers; i++ {
 		go w.loop()
 	}
@@ -440,18 +472,24 @@ func NewWorker(store *Store, coreDir string, workers, qlen int) *Worker {
 
 // Submit enqueues a job, honoring the dedup cache.
 func (w *Worker) Submit(j *Job) {
-	key := dedupKey(j.Target)
+	key := w.store.dedupKey(j.Target)
 	if prevID, ok := w.store.cacheLookup(key); ok {
 		if prev, ok := w.store.Get(prevID); ok && prev.Status == StatusCompleted {
+			if err := w.reportDB.CopyJob(prevID, j.ID); err != nil {
+				// Fall through to a real (re)scan rather than serve a job
+				// whose report rows don't actually exist.
+				w.queue <- j.ID
+				return
+			}
 			w.store.update(j.ID, func(j *Job) {
 				j.Status = StatusCompleted
 				j.Progress = 100
 				j.Stage = "done"
 				j.CacheHit = true
+				j.AnalyzerVersion = prev.AnalyzerVersion
 				j.Binaries = prev.Binaries
 				j.Findings = prev.Findings
 				j.HighCrit = prev.HighCrit
-				j.reportPath = prev.reportPath
 				j.mdPath = prev.mdPath
 				j.sbomPath = prev.sbomPath
 				now := time.Now().UTC()
@@ -582,7 +620,16 @@ func (w *Worker) run(id string) {
 		return
 	}
 
-	bins, finds, hc := summarize(reportPath)
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		w.fail(id, "report file unavailable: "+err.Error())
+		return
+	}
+	bins, finds, hc, err := w.reportDB.Ingest(id, data, w.triage.Snapshot())
+	if err != nil {
+		w.fail(id, "storing report failed: "+err.Error())
+		return
+	}
 	fin := time.Now().UTC()
 	w.store.update(id, func(j *Job) {
 		j.Status = StatusCompleted
@@ -593,8 +640,9 @@ func (w *Worker) run(id string) {
 		j.mdPath = mdPath
 		j.sbomPath = sbomPath
 		j.FinishedAt = &fin
+		j.AnalyzerVersion = w.store.analyzerVersion
 	})
-	w.store.cacheStore(dedupKey(job.Target), id)
+	w.store.cacheStore(w.store.dedupKey(job.Target), id)
 }
 
 func (w *Worker) fail(id, msg string) {
@@ -604,29 +652,4 @@ func (w *Worker) fail(id, msg string) {
 		j.Error = msg
 		j.FinishedAt = &fin
 	})
-}
-
-// summarize reads counts out of the report JSON without modeling the whole thing.
-func summarize(path string) (bins, finds, highCrit int) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var r struct {
-		Binaries []json.RawMessage `json:"binaries"`
-		Findings []struct {
-			Severity string `json:"severity"`
-		} `json:"findings"`
-	}
-	if json.Unmarshal(data, &r) != nil {
-		return
-	}
-	bins = len(r.Binaries)
-	finds = len(r.Findings)
-	for _, f := range r.Findings {
-		if f.Severity == "critical" || f.Severity == "high" {
-			highCrit++
-		}
-	}
-	return
 }

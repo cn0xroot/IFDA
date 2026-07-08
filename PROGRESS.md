@@ -1,9 +1,91 @@
 # 开发进度 — IFDA(IoT Firmware Deep Analysis)
 
 > 配套需求文档:[`firmware-analysis-requirements.md`](firmware-analysis-requirements.md)
-> 最近更新:2026-06-10
+> 最近更新:2026-07-08
 
 ## 0. 变更记录
+
+- **2026-07-08 — v3.0:剥离二进制函数恢复、CVE 同步可靠性、SQLite 分页迁移、BusyBox 指令对比、对比扫描/去重缓存修复。**
+  自 v2.0(`ac32f3f`)以来积累的全部功能改动,一次性记录、提交、打 tag。
+
+  逆向引擎:
+  - 剥离(stripped)ELF 的函数边界恢复(`re/disasm.py`):此前符号表为空时整段 `.text` 会退化成一个巨大伪函数;
+    现改为同一次线性扫描里做**直接调用目标发现** + **prologue 识别**(`push {…, lr}` / `stmfd sp!, {…, lr}`,
+    覆盖只被回调/跳转表引用、从未被直接 `call` 到的函数),并用已知符号体(`_symbol_bodies`)防止函数体内的
+    数据字/中间指令被误判为函数入口。
+  - 剥离 ARM 二进制新增 **ARM/Thumb 模式自动判定**(`_detect_arm_default_thumb`):无 `$a`/`$t` mapping symbol 时,
+    两种模式各解一遍取有效指令覆盖字节数更多的一侧,避免 Thumb-heavy armhf 固件被误判成 ARModel 产出乱码。
+  - `_robust_disasm`:线性扫描跳过反汇编不了的字面量池/数据字,不再因为中途一个坏字就把后续代码全部截断。
+  - ELF entry point 现在总会被纳入函数起点集合(只要落在可执行区间内)。
+
+  CVE 覆盖可靠性:
+  - `cve_bin_tool.py` 改为 `-u daily -n api2`(此前默认走不可靠的 `json-mirror`),并通过运行时补丁
+    `vuln/_nvd_patch.py` 修掉上游 cve-bin-tool 3.4 的两个 bug:① `NVD_API.nvd_count_metadata()` 请求的
+    仅用于估算进度的计数接口被 Cloudflare 403 时会让**整个同步直接失败**,现改为兜底估算值继续跑;
+    ② `NVD_Source.format_data_api2()` 有三处独立 bug(不存在的 `self.logger`、大小写不一致的 dict key、
+    `baseMetricV4`/`baseMetricV2` 复制粘贴错位),对普通 CVE(尤其无 CVSS 分数或纯 CVSSv2 的旧 CVE)必现崩溃,
+    现替换为修复后的版本。
+  - 新增独立运维脚本 `scripts/bootstrap_nvd_cache.py`:从 GitHub 镜像(fkie-cad/nvd-json-data-feeds)拉取
+    预格式化的 NVD 快照灌入 cve-bin-tool 本地库,作为直连 NVD 慢/限流时的快速替代(手动运行,未接入服务)。
+
+  存储架构:
+  - findings/binaries/scripts/components 从单个 JSON 大 blob 迁移到 SQLite(`service/reportdb.go`),
+    交互式标签页改为服务端分页 + 过滤,不再一次性把整份报告(含全部 strings)扔给浏览器渲染
+    ——这正是此前大扫描把 Findings 标签页卡死的根因。Triage 决策改为 ingest 时直接以 overlay 方式落库
+    (`TriageStore.Snapshot()`),不再在读时对 JSON 做二次改写。
+  - 发现并修复此前分页/导出的隐藏截断 bug:`ListFindings`/`paginateRaw` 对超出常规页大小的请求会静默砍到
+    100/500 条,导致大报告(3000+ findings)的 JSON/MD/SBOM 导出以及 Compare 的 `/report` 拉取实际上从未
+    完整过。新增 `NoLimit`/`listAllRaw`/前端 `?all=1` 约定,保证"导出"必须是名副其实的全部数据。
+
+  固件级元数据(`inventory/firmware_meta.py`, 新增 Files 标签页):
+  - 内核版本识别加两层兜底:loadable module 的 `vermagic` 字符串、`lib/modules/<version>/` 目录名——
+    覆盖内核镜像和 rootfs 分属不同 flash 分区、rootfs 里没有 `Linux version` 横幅的常见情况。
+  - MD5 此前在 UI 里被截断成前 8 位,现全部改为完整 32 位。
+  - 新增完整文件清单(不再局限于 ELF 二进制和能识别的脚本类型),正确跳过设备节点/FIFO/socket(此前
+    `open()` 一个真实的 `/dev/console` 字符设备会导致整个分析卡死,现与仓库里其它遍历器一致地先
+    `os.path.isfile()` 判断再打开)。
+
+  BusyBox 指令对比(新标签页,`inventory/busybox_audit.py`):
+  - 对比该固件 busybox 实际编译进的 applet 与内置参考列表(~380 个),给出"已编译"/"被阉割(缺失)"两组;
+    检测基于 busybox 二进制里的精确字符串 token(而非子串搜索),避免误判。
+  - 扫描树中**任意层级**的 bin/sbin 目录(不止顶层 /bin /sbin),列出busybox 之外的额外可执行文件
+    (标准二进制/脚本/非 busybox 符号链接),按目录筛选 + 文本搜索。
+  - 展示 `/etc/init.d`(含各厂商等价目录)下每个脚本的文件名与完整源码。
+
+  对比扫描(Compare)准确性:
+  - 修复严重 bug:finding 匹配此前用含**绝对路径**的 `Finding.fingerprint()`,导致两次独立提取
+    (不同绝对根目录,如 bank_A/bank_B)之间几乎所有 finding 都被误判成"新增+移除",`common` 恒为 0;
+    改为按各自 target 相对化路径重建匹配 key。用真实数据验证:修复前 512 common/2494 新增/2494 移除,
+    修复后 3006 common/0/0(两份固件内容其实一致)。
+  - 文件对比此前只比较二进制+脚本,现改用完整文件清单(含配置文件等);字符串/敏感字符串对比同样
+    从"只看二进制"扩展到覆盖非二进制文件的提取字符串。
+  - 修复报告拉取失败(鉴权过期/任务被删等)时被静默当作"这一侧没有任何 finding"处理、从而产出
+    "0 新增/全部消失/0 未变化"这类误导性结果的 bug——现在会检查 HTTP 状态并明确报错。
+
+  分页与预览体验:
+  - 敏感字符串结果加分页(客户端,200/页)+ 文本过滤框。
+  - findings/files/敏感字符串三处分页统一加"跳转到指定页"输入框。
+  - Files 与 BusyBox 标签页里的非二进制文件(配置文件、脚本)支持点击预览源码;新增
+    `/api/jobs/{id}/file-content` 接口(先校验路径确实属于该任务扫描记录里的文件,再从磁盘按需读取,
+    256KB 上限+截断提示);预览展开在被点击的那一行下方,不是页面/整段列表的最底部。
+  - 报告加载、对比扫描均从无进度指示的转圈动画改为带百分比的进度条。
+
+  任务去重缓存修复:
+  - 去重缓存此前只按"目标路径 + 大小 + mtime"算 key,与分析器代码版本无关——分析器升级后重新提交
+    同一固件会静默复用旧版本产出的报告(缺少新字段,如 busybox_audit),这正是 busybox 对比功能
+    "看似没生效"的真实原因。现纳入 `ifda.__version__`(启动时探测),并给每个任务记录实际产出报告的
+    分析器版本,只信任版本匹配当前运行版本的历史任务作为缓存来源(`ifda/__init__.py` 同步升到 2.1.0)。
+
+  其它:
+  - 静态前端资源(`service/main.go`)加 `Cache-Control: no-cache`——Go `embed.FS` 内嵌文件的 mtime
+    恒为零值,`http.FileServer` 因此从不下发 `Last-Modified`,部分浏览器可能长期复用旧版页面而感知
+    不到任何一次重新部署。
+  - 清理仓库里残留的旧版 Go 二进制 `service/fws`。
+
+  验证:Python 38 通过/2 跳过(`tests/test_core.py`);Go 全量通过,新增
+  `job_test.go`(去重缓存版本失效)/`reportdb_test.go`(busybox 审计往返、导出不截断、finding 去重)/
+  `api_test.go`(文件预览截断与非常规文件拒绝)。真实固件端到端验证
+  (真实固件样本 bank_A/bank_B 分区:3006 findings、2578 files、537 binaries;62062-finding 大型固件验证导出/分页不截断)。
 
 - **2026-06-10 — 项目更名 `fwana` → `IFDA`(IoT Firmware Deep Analysis)。**
   Python 包 `fwana/`→`ifda/`(全部 `import`、`python -m ifda.cli`、pyproject `name`/入口);

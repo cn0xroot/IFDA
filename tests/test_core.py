@@ -403,6 +403,242 @@ def test_filesystem_hardening(tmp_path):
     assert by_class["init_script"].severity is Severity.INFO
 
 
+def test_firmware_meta(tmp_path):
+    """Firmware-level summary: kernel version banner found anywhere in the
+    tree, total file count/size, and majority arch/endian across binaries."""
+    from ifda.inventory import detect_kernel_version, scan_tree_stats, summarize_arch_endian
+
+    (tmp_path / "boot").mkdir()
+    # Kernel version banner embedded mid-file, the way it sits inside a real
+    # (possibly compressed) kernel image rather than as the whole file.
+    (tmp_path / "boot" / "zImage").write_bytes(
+        b"\x00" * 64 + b"Linux version 4.14.170 (buildbot@host) #1 SMP\x00" + b"\xff" * 64)
+    (tmp_path / "other.bin").write_bytes(b"nothing interesting here")
+
+    assert detect_kernel_version(str(tmp_path)) == "4.14.170"
+
+    count, total = scan_tree_stats(str(tmp_path))
+    assert count == 2
+    assert total == sum(p.stat().st_size for p in tmp_path.rglob("*") if p.is_file())
+
+    arch, endian = summarize_arch_endian(
+        ["arm", "arm", "mips", ""], ["little", "little", "big", ""])
+    assert arch == "arm"
+    assert endian == "little"
+
+
+def test_kernel_version_from_modules_dir(tmp_path):
+    """Split boot/rootfs firmware: the rootfs being scanned carries the
+    loadable modules but not the kernel image, so there's no 'Linux version'
+    banner. The kernel version must still be recovered from the
+    lib/modules/<version>/ directory name."""
+    from ifda.inventory import detect_kernel_version
+
+    (tmp_path / "lib" / "modules" / "4.4.60").mkdir(parents=True)
+    (tmp_path / "lib" / "modules" / "4.4.60" / "fat.ko").write_bytes(b"not a real module")
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "config").write_text("nothing versiony here")
+
+    assert detect_kernel_version(str(tmp_path)) == "4.4.60"
+
+
+def test_kernel_version_from_vermagic(tmp_path):
+    """A loadable module's vermagic string carries the kernel version even
+    when the module lives outside a conventional lib/modules/<version>/ path."""
+    from ifda.inventory import detect_kernel_version
+
+    (tmp_path / "drivers").mkdir()
+    (tmp_path / "drivers" / "custom.ko").write_bytes(
+        b"\x7fELF\x00\x00" + b"padding" * 4 + b"\x00vermagic=5.10.110 SMP mod_unload\x00")
+
+    assert detect_kernel_version(str(tmp_path)) == "5.10.110"
+
+
+def test_firmware_meta_skips_device_nodes(tmp_path):
+    """Regression: a real extracted rootfs's /dev often preserves character
+    device nodes (e.g. /dev/console, major 5 minor 1) with their real
+    major/minor numbers. open()+read() on one of those blocks forever
+    waiting for I/O that will never come -- which hung the whole analysis
+    pipeline on a real firmware target until this was fixed to skip
+    anything that isn't a regular file, the same way every other
+    tree-walker in this codebase already does."""
+    import os
+    from ifda.inventory import detect_kernel_version
+
+    (tmp_path / "dev").mkdir()
+    os.mknod(str(tmp_path / "dev" / "console"), 0o600 | 0o020000, os.makedev(5, 1))  # S_IFCHR
+    (tmp_path / "boot").mkdir()
+    (tmp_path / "boot" / "zImage").write_bytes(b"Linux version 4.14.170 boom\x00")
+
+    # Must return promptly (no test timeout needed) rather than blocking on
+    # the character device's read().
+    assert detect_kernel_version(str(tmp_path)) == "4.14.170"
+
+
+def test_list_all_files(tmp_path):
+    """Full file listing (FR-INV): every file in the tree is present with a
+    size and md5, a symlink is listed but never opened for hashing, and a
+    device node is listed (size only, no md5) rather than blocking forever."""
+    import os
+    from ifda.inventory import list_all_files
+
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "config").write_text("hello world")
+    os.symlink("config", str(tmp_path / "etc" / "config.lnk"))
+    (tmp_path / "dev").mkdir()
+    os.mknod(str(tmp_path / "dev" / "console"), 0o600 | 0o020000, os.makedev(5, 1))
+
+    files = {os.path.relpath(f["path"], tmp_path): f for f in list_all_files(str(tmp_path))}
+
+    assert set(files) == {"etc/config", "etc/config.lnk", "dev/console"}
+    assert files["etc/config"]["size"] == 11
+    assert files["etc/config"]["md5"] == __import__("hashlib").md5(b"hello world").hexdigest()
+    assert files["etc/config.lnk"]["is_symlink"] is True
+    assert files["etc/config.lnk"]["md5"] == ""  # never opened/followed
+    assert files["dev/console"]["is_symlink"] is False
+    assert files["dev/console"]["md5"] == ""  # never opened -- would hang otherwise
+
+
+def test_pipeline_files_cover_whole_tree(tmp_path):
+    """Regression: analyze()'s file listing must cover every file under the
+    target, not just the ELF binaries/scripts subset -- classified by kind
+    (binary/script/symlink/other) using the same paths already resolved for
+    report.binaries/report.scripts."""
+    import os
+    from ifda.pipeline import analyze
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "busybox").write_bytes(b"\x7fELF" + b"\x00" * 12)
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "config.txt").write_text("just a config file")
+    os.symlink("busybox", str(tmp_path / "bin" / "sh"))
+
+    report = analyze(str(tmp_path))
+
+    by_path = {f.path: f for f in report.files}
+    assert len(report.files) == 3
+    assert by_path[str(tmp_path / "bin" / "busybox")].kind == "binary"
+    assert by_path[str(tmp_path / "etc" / "config.txt")].kind == "other"
+    assert by_path[str(tmp_path / "bin" / "sh")].kind == "symlink"
+    assert report.file_count == 3
+    assert report.firmware_size == sum(f.size for f in report.files)
+
+
+def test_backdoor_scan(tmp_path):
+    """Non-busybox command scan: a standalone binary shadowing a
+    conventionally-busybox command is flagged; a proper busybox symlink is
+    not; and nothing fires at all when busybox isn't present in the tree."""
+    import os
+    from ifda.vuln.backdoor import scan_backdoors
+
+    (tmp_path / "bin").mkdir()
+    bb = tmp_path / "bin" / "busybox"
+    bb.write_bytes(b"\x7fELF" + b"\x00" * 12)
+
+    # Expected pattern: a real symlink into busybox.
+    os.symlink("busybox", tmp_path / "bin" / "ls")
+
+    # Anomaly: a standalone ELF implementing a high-risk applet name that
+    # busybox already provides here -- the backdoor-shadowing pattern.
+    fake_login = tmp_path / "bin" / "login"
+    fake_login.write_bytes(b"\x7fELF" + b"\x00" * 12)
+
+    findings = scan_backdoors(str(tmp_path))
+    by_component = {f.component: f for f in findings}
+
+    assert "/bin/ls" not in by_component
+    assert by_component["/bin/login"].severity is Severity.HIGH
+    assert by_component["/bin/login"].vuln_class == "suspected_backdoor"
+
+
+def test_backdoor_scan_no_busybox_no_noise(tmp_path):
+    """Without busybox anywhere in the tree, the heuristic doesn't apply --
+    a standalone /bin/login here is unremarkable and must not be flagged."""
+    from ifda.vuln.backdoor import scan_backdoors
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "login").write_bytes(b"\x7fELF" + b"\x00" * 12)
+
+    assert scan_backdoors(str(tmp_path)) == []
+
+
+def test_busybox_audit_compiled_and_missing(tmp_path):
+    """Applet detection is exact-string-token based: names embedded in the
+    fake busybox binary as their own NUL-terminated strings show up as
+    compiled_in; well-known applets never mentioned show up as missing
+    ("crippled busybox")."""
+    from ifda.inventory import audit_busybox
+
+    bb = tmp_path / "busybox"
+    bb.write_bytes(b"\x7fELF" + b"\x00" * 8 + b"ls\x00cat\x00sh\x00" + b"unrelated junk\x00")
+
+    audit = audit_busybox(str(tmp_path), [str(bb)])
+
+    assert audit.has_busybox is True
+    assert {"ls", "cat", "sh"} <= set(audit.compiled_in)
+    assert "telnetd" in audit.missing  # never mentioned in the fake binary
+    assert "telnetd" not in audit.compiled_in
+
+
+def test_busybox_audit_no_busybox(tmp_path):
+    """Without any busybox binary, compiled_in/missing are both empty --
+    there's no baseline to compare against, so nothing should be reported
+    as "missing" (that would just be every applet, which is noise)."""
+    from ifda.inventory import audit_busybox
+
+    audit = audit_busybox(str(tmp_path), [])
+    assert audit.has_busybox is False
+    assert audit.compiled_in == []
+    assert audit.missing == []
+
+
+def test_busybox_audit_extra_commands(tmp_path):
+    """bin/: a busybox symlink is not "extra"; a standalone binary whose name
+    busybox actually compiled in is not "extra" either (that's the separate
+    shadowing/backdoor concern); a standalone binary with a name busybox
+    never provides is "extra" -- across more than one bin/sbin directory."""
+    import os
+    from ifda.inventory import audit_busybox
+
+    bb = tmp_path / "bin" / "busybox"
+    (tmp_path / "bin").mkdir(parents=True)
+    bb.write_bytes(b"\x7fELF" + b"\x00" * 8 + b"ls\x00sh\x00")
+    os.symlink("busybox", tmp_path / "bin" / "ls")  # normal busybox-provided command
+    (tmp_path / "bin" / "sh").write_bytes(b"\x7fELF\x00\x00\x00\x00")  # standalone but a known applet -- not "extra"
+
+    (tmp_path / "usr" / "sbin").mkdir(parents=True)
+    (tmp_path / "usr" / "sbin" / "vendord").write_bytes(b"\x7fELF\x00\x00\x00\x00")  # genuinely extra
+
+    audit = audit_busybox(str(tmp_path), [str(bb)])
+
+    by_name = {c.name: c for c in audit.extra_commands}
+    assert "ls" not in by_name
+    assert "sh" not in by_name
+    assert by_name["vendord"].dir == "/usr/sbin"
+    assert by_name["vendord"].kind == "binary"
+
+
+def test_busybox_audit_init_scripts(tmp_path):
+    """/etc/init.d scripts are captured with their full source, and a device
+    node dropped in there (real firmware sometimes does) is skipped rather
+    than hanging the scan."""
+    import os
+    from ifda.inventory import audit_busybox
+
+    initd = tmp_path / "etc" / "init.d"
+    initd.mkdir(parents=True)
+    (initd / "S50network").write_text("#!/bin/sh\necho starting network\n")
+    os.mknod(str(initd / "console"), 0o600 | 0o020000, os.makedev(5, 1))
+
+    audit = audit_busybox(str(tmp_path), [])
+
+    assert len(audit.init_scripts) == 1
+    script = audit.init_scripts[0]
+    assert script.path.endswith("S50network")
+    assert script.content == "#!/bin/sh\necho starting network\n"
+    assert script.truncated is False
+
+
 def test_cyclonedx_sbom():
     from ifda.report.sbom import render_cyclonedx
     import json

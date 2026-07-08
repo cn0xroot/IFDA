@@ -79,7 +79,7 @@
   .right { overflow-y:auto; padding:18px 22px; }
 
   input, select, button { font:inherit; }
-  input[type=text], select { background:var(--panel); border:1px solid var(--line);
+  input[type=text], input[type=number], select { background:var(--panel); border:1px solid var(--line);
         color:var(--fg); padding:7px 9px; border-radius:6px; font-size:13px; width:100%; }
   .submit { display:flex; gap:6px; margin-bottom:8px; }
   .submit input { flex:1; }
@@ -107,6 +107,8 @@
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .job .target-dir { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--muted);
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
+  .jobid { font-family:ui-monospace,Menlo,monospace; font-size:10px; color:var(--muted);
+           white-space:nowrap; flex:none; align-self:flex-start; margin-top:2px; }
   .badge { font-size:10px; padding:1px 7px; border-radius:10px; text-transform:uppercase;
            letter-spacing:.04em; font-weight:700; }
   .badge.queued{background:var(--line2);color:var(--soft)} .badge.running{background:var(--accent);color:#fff}
@@ -145,6 +147,7 @@
   .card.clickable { cursor:pointer; } .card.clickable:hover { border-color:var(--accent); }
   .card .n { font-size:26px; font-weight:700; line-height:1.1; }
   .card .l { color:var(--muted); font-size:12px; margin-top:2px; }
+  .fwmeta { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
 
   .distro { background:var(--panel); border:1px solid var(--line); border-radius:8px;
             padding:14px 16px; margin-bottom:18px; }
@@ -160,6 +163,9 @@
 
   .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;
              background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .pager { display:flex; gap:10px; align-items:center; justify-content:center; margin-top:14px; }
+  .pager-jump { display:flex; gap:6px; align-items:center; margin-left:8px; }
+  .pager-jump input[type=number] { width:64px; text-align:center; padding:5px 6px; }
   .filters .sevtog { display:flex; gap:4px; }
   .filters .sevtog button { padding:3px 9px; font-size:11px; border-radius:12px;
         background:var(--panel2); border:1px solid var(--line); color:var(--muted); font-weight:700; }
@@ -200,6 +206,7 @@
   table.bins th, table.bins td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
   table.bins th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
   table.bins td.path { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  table.bins td.preview-cell { background:var(--panel2); padding:12px 14px; }
   .chip { display:inline-block; font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px;
           margin:1px 2px; }
   .chip.ok{background:rgba(34,197,94,.15);color:var(--ok)}
@@ -353,7 +360,7 @@
   <h1>IFDA</h1>
   <span class="tag" x-text="t('tagline')"></span>
   <span class="spacer"></span>
-  <span class="tag" x-show="report" x-text="summaryText()"></span>
+  <span class="tag" x-show="summary" x-text="summaryText()"></span>
   <input type="text" class="actorbox" x-model="actor" @change="localStorage.setItem('ifda-actor', actor)"
          :placeholder="t('actor_placeholder')" :title="t('actor_hint')">
   <button class="ghost sm" :class="{active: compareMode}" @click="toggleCompare()" x-text="t('btn_compare')"></button>
@@ -432,6 +439,7 @@
             <div class="target-name" :title="j.target" x-text="targetName(j.target)"></div>
             <div class="target-dir" x-show="targetDir(j.target)" :title="j.target" x-text="targetDir(j.target)"></div>
           </div>
+          <span class="jobid" :title="j.id" x-text="jobIdShort(j.id)"></span>
           <span class="badge" :class="j.status" x-text="tStatus(j.status)"></span>
         </div>
         <div class="bar"><span :style="`width:${j.progress}%`"></span></div>
@@ -578,7 +586,12 @@
           <button @click="runCompare()" x-text="t('btn_run_compare')"></button>
         </div>
         <template x-if="comparing">
-          <div class="loadingBox"><div class="spinner"></div><div x-text="t('comparing')"></div></div>
+          <div class="loadingBox">
+            <div style="width:280px">
+              <div class="bar"><span :style="`width:${compareProgress}%`"></span></div>
+              <div style="text-align:center;margin-top:10px" x-text="t('comparing')+' '+compareProgress+'%'"></div>
+            </div>
+          </div>
         </template>
         <template x-if="compareResult">
           <div>
@@ -651,6 +664,53 @@
                 </div>
               </div>
             </template>
+
+            <h3 style="margin-top:18px" x-text="t('compare_counts')"></h3>
+            <div class="cards">
+              <div class="card"><div class="n" x-text="compareResult.binariesA+' → '+compareResult.binariesB"></div><div class="l" x-text="t('card_binaries')"></div></div>
+              <div class="card"><div class="n" x-text="compareResult.scriptsA+' → '+compareResult.scriptsB"></div><div class="l" x-text="t('tab_scripts')"></div></div>
+              <div class="card"><div class="n" x-text="compareResult.filesA+' → '+compareResult.filesB"></div><div class="l" x-text="t('tab_files')"></div></div>
+            </div>
+
+            <h3 style="margin-top:18px" x-text="t('compare_files')"></h3>
+            <div class="table-wrap">
+              <table class="bins">
+                <thead><tr><th x-text="t('th_path')"></th><th x-text="t('compare_status')"></th><th x-text="t('th_md5')"></th></tr></thead>
+                <tbody>
+                  <template x-for="(x,i) in compareResult.fileDiff.added" :key="'add-'+i">
+                    <tr><td class="path" :title="x.path" x-text="shortPath(x.path)"></td>
+                        <td><span class="chip ok" x-text="t('compare_status_added')"></span></td>
+                        <td class="path" x-text="x.md5||'—'"></td></tr>
+                  </template>
+                  <template x-for="(x,i) in compareResult.fileDiff.removed" :key="'rem-'+i">
+                    <tr><td class="path" :title="x.path" x-text="shortPath(x.path)"></td>
+                        <td><span class="chip bad" x-text="t('compare_status_removed')"></span></td>
+                        <td class="path" x-text="x.md5||'—'"></td></tr>
+                  </template>
+                  <template x-for="(x,i) in compareResult.fileDiff.modified" :key="'mod-'+i">
+                    <tr><td class="path" :title="x.path" x-text="shortPath(x.path)"></td>
+                        <td><span class="chip warn" x-text="t('compare_modified')"></span></td>
+                        <td class="path" x-text="(x.md5A||'—')+' → '+(x.md5B||'—')"></td></tr>
+                  </template>
+                </tbody>
+              </table>
+              <template x-if="!compareResult.fileDiff.added.length && !compareResult.fileDiff.removed.length && !compareResult.fileDiff.modified.length">
+                <div class="empty" x-text="t('compare_none')"></div>
+              </template>
+            </div>
+            <p class="meta" x-text="t('compare_unchanged')+': '+compareResult.fileDiff.unchangedCount"></p>
+
+            <h3 style="margin-top:18px" x-text="t('compare_strings')"></h3>
+            <p class="meta" x-text="t('compare_status_added')+': '+compareResult.stringsAddedTotal+'  ·  '+t('compare_status_removed')+': '+compareResult.stringsRemovedTotal"></p>
+            <pre class="code" style="max-height:30vh" x-show="compareResult.stringsAdded.length" x-text="compareResult.stringsAdded.map(s=>'+ '+s).join('\n')"></pre>
+            <pre class="code" style="max-height:30vh" x-show="compareResult.stringsRemoved.length" x-text="compareResult.stringsRemoved.map(s=>'- '+s).join('\n')"></pre>
+
+            <h3 style="margin-top:18px" x-text="t('compare_sensitive')"></h3>
+            <template x-if="!compareResult.sensitiveAdded.length && !compareResult.sensitiveRemoved.length">
+              <div class="empty" x-text="t('compare_none')"></div>
+            </template>
+            <pre class="code" style="max-height:30vh" x-show="compareResult.sensitiveAdded.length" x-text="compareResult.sensitiveAdded.map(s=>'+ '+s).join('\n')"></pre>
+            <pre class="code" style="max-height:30vh" x-show="compareResult.sensitiveRemoved.length" x-text="compareResult.sensitiveRemoved.map(s=>'- '+s).join('\n')"></pre>
           </div>
         </template>
       </div>
@@ -691,12 +751,14 @@
       </div>
     </template>
 
-    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && !report">
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && (!summary || reportLoading)">
       <div class="loadingBox">
         <template x-if="!reportLoadError">
-          <div class="spinner"></div>
+          <div style="width:280px">
+            <div class="bar"><span :style="`width:${reportLoadProgress}%`"></span></div>
+            <div style="text-align:center;margin-top:10px" x-text="t('loading_report')+' '+reportLoadProgress+'%'"></div>
+          </div>
         </template>
-        <div x-show="!reportLoadError" x-text="t('loading_report')"></div>
         <template x-if="reportLoadError">
           <div style="text-align:center">
             <div class="sev-crit" x-text="t('report_load_failed')+': '+reportLoadError"></div>
@@ -706,22 +768,26 @@
       </div>
     </template>
 
-    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && report">
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && summary && !reportLoading">
       <div>
         <div class="tabs">
           <button :class="{active:tab==='dashboard'}" @click="tab='dashboard'" x-text="t('tab_dashboard')"></button>
           <button :class="{active:tab==='findings'}" @click="tab='findings'"
-                  x-text="`${t('tab_findings')} (${findings.length})`"></button>
+                  x-text="`${t('tab_findings')} (${summary.findings})`"></button>
           <button :class="{active:tab==='binaries'}" @click="tab='binaries'"
-                  x-text="`${t('tab_binaries')} (${binaries.length})`"></button>
+                  x-text="`${t('tab_binaries')} (${binariesPage.total})`"></button>
           <button :class="{active:tab==='scripts'}" @click="tab='scripts'"
-                  x-text="`${t('tab_scripts')} (${scripts.length})`"></button>
+                  x-text="`${t('tab_scripts')} (${scriptsPage.total})`"></button>
           <button :class="{active:tab==='components'}" @click="tab='components'"
-                  x-text="`${t('tab_components')} (${components.length})`"></button>
+                  x-text="`${t('tab_components')} (${componentsPage.total})`"></button>
+          <button :class="{active:tab==='files'}" @click="tab='files'"
+                  x-text="`${t('tab_files')} (${summary.file_count})`"></button>
           <button :class="{active:tab==='strings'}" @click="tab='strings'; onStringsTab()"
                   x-text="`${t('tab_strings')} (${totalStrings})`"></button>
           <button :class="{active:tab==='sensitive'}" @click="tab='sensitive'; computeSensitive()"
                   x-text="`${t('tab_sensitive')} (${sensitiveResults.length})`"></button>
+          <button :class="{active:tab==='busybox'}" @click="tab='busybox'"
+                  x-text="`${t('tab_busybox')} (${extraCommands.length})`"></button>
           <span class="spacer"></span>
           <div class="exp">
             <a :href="exportURL('json')"><button class="ghost sm" x-text="t('export_json')"></button></a>
@@ -733,8 +799,8 @@
         <!-- DASHBOARD -->
         <div x-show="tab==='dashboard'">
           <div class="cards">
-            <div class="card" :class="{clickable: findings.length>0}" @click="findings.length>0 && goToFindings()">
-              <div class="n" x-text="findings.length"></div><div class="l" x-text="t('card_findings')"></div>
+            <div class="card" :class="{clickable: summary.findings>0}" @click="summary.findings>0 && goToFindings()">
+              <div class="n" x-text="summary.findings"></div><div class="l" x-text="t('card_findings')"></div>
             </div>
             <div class="card" :class="{clickable: sevCount('critical')>0}" @click="sevCount('critical')>0 && goToFindings({sevOnly:'critical'})">
               <div class="n sev-crit" x-text="sevCount('critical')"></div><div class="l" x-text="t('card_critical')"></div>
@@ -742,12 +808,18 @@
             <div class="card" :class="{clickable: sevCount('high')>0}" @click="sevCount('high')>0 && goToFindings({sevOnly:'high'})">
               <div class="n sev-high" x-text="sevCount('high')"></div><div class="l" x-text="t('card_high')"></div>
             </div>
-            <div class="card" :class="{clickable: binaries.length>0}" @click="binaries.length>0 && (tab='binaries')">
-              <div class="n" x-text="binaries.length"></div><div class="l" x-text="t('card_binaries')"></div>
+            <div class="card" :class="{clickable: summary.binaries>0}" @click="summary.binaries>0 && (tab='binaries')">
+              <div class="n" x-text="summary.binaries"></div><div class="l" x-text="t('card_binaries')"></div>
             </div>
             <div class="card" :class="{clickable: cveCount>0}" @click="cveCount>0 && goToCves()">
               <div class="n" x-text="cveCount"></div><div class="l" x-text="t('card_cves')"></div>
             </div>
+          </div>
+          <div class="fwmeta" x-show="summary.kernel_version || summary.arch_summary || summary.file_count">
+            <span class="chip neutral" x-show="summary.kernel_version" x-text="t('fw_kernel')+': '+summary.kernel_version"></span>
+            <span class="chip neutral" x-show="summary.arch_summary" x-text="t('fw_arch')+': '+summary.arch_summary+(summary.endian_summary?' ('+summary.endian_summary+')':'')"></span>
+            <span class="chip neutral" x-show="summary.file_count" x-text="t('fw_files')+': '+summary.file_count.toLocaleString()"></span>
+            <span class="chip neutral" x-show="summary.firmware_size" x-text="t('fw_size')+': '+formatSize(summary.firmware_size)"></span>
           </div>
           <div class="distro">
             <h3 x-text="t('by_severity')"></h3>
@@ -777,36 +849,36 @@
             <div class="sevtog">
               <template x-for="s in SEVS" :key="s">
                 <button :class="{on:f.sev[s]}" :style="f.sev[s]?`background:var(--${SHORT[s]});border-color:var(--${SHORT[s]})`:''"
-                        @click="f.sev[s]=!f.sev[s]" x-text="tSev(s)[0].toUpperCase()" :title="tSev(s)"></button>
+                        @click="f.sev[s]=!f.sev[s]; loadFindings()" x-text="tSev(s)[0].toUpperCase()" :title="tSev(s)"></button>
               </template>
             </div>
-            <select x-model="f.vclass">
+            <select x-model="f.vclass" @change="loadFindings()">
               <option value="" x-text="t('filter_all_classes')"></option>
               <template x-for="c in vclasses" :key="c"><option :value="c" x-text="c"></option></template>
             </select>
-            <select x-model="f.triage">
+            <select x-model="f.triage" @change="loadFindings()">
               <option value="" x-text="t('filter_any_triage')"></option>
               <option value="new" x-text="tTriage('new')"></option>
               <option value="confirmed" x-text="tTriage('confirmed')"></option>
               <option value="false_positive" x-text="tTriage('false_positive')"></option>
               <option value="accepted_risk" x-text="tTriage('accepted_risk')"></option>
             </select>
-            <input type="text" x-model="f.q" :placeholder="t('search_placeholder')">
+            <input type="text" x-model.debounce.400ms="f.q" @input="loadFindings()" :placeholder="t('search_placeholder')">
             <label class="rng"><span x-text="t('conf_label')"></span>
-              <input type="range" min="0" max="1" step="0.05" x-model.number="f.minConf" style="width:90px">
+              <input type="range" min="0" max="1" step="0.05" x-model.number="f.minConf" @change="loadFindings()" style="width:90px">
               <span x-text="f.minConf"></span>
             </label>
-            <select x-model="sort">
+            <select x-model="sort" @change="loadFindings()">
               <option value="severity" x-text="t('sort_severity')"></option>
               <option value="confidence" x-text="t('sort_confidence')"></option>
             </select>
-            <span class="count" x-text="filtered.length+' / '+findings.length"></span>
+            <span class="count" x-text="findingsPage.total+' '+t('chip_findings')"></span>
             <button class="ghost sm" @click="exportFilteredCSV()" x-text="t('export_filtered_csv')"></button>
             <button class="ghost sm" @click="exportFilteredJSON()" x-text="t('export_filtered_json')"></button>
           </div>
 
-          <template x-if="!filtered.length"><div class="empty" x-text="t('no_findings_match')"></div></template>
-          <template x-for="(f, fidx) in filtered" :key="f.id+'-'+fidx">
+          <template x-if="!findings.length"><div class="empty" x-text="t('no_findings_match')"></div></template>
+          <template x-for="(f, fidx) in findings" :key="f.id+'-'+fidx">
             <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
               <div class="hd" @click="open=!open; if(open) triageHistoryFor(f.id)">
                 <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
@@ -856,6 +928,17 @@
               </div>
             </div>
           </template>
+          <div class="pager" x-show="findingsPage.total > findingsPage.limit">
+            <button class="ghost sm" :disabled="findingsPage.offset<=0" @click="findingsPrevPage()" x-text="t('btn_prev_page')"></button>
+            <span class="sub" x-text="(findingsPage.offset+1)+'–'+Math.min(findingsPage.offset+findingsPage.limit, findingsPage.total)+' / '+findingsPage.total"></span>
+            <button class="ghost sm" :disabled="findingsPage.offset+findingsPage.limit>=findingsPage.total" @click="findingsNextPage()" x-text="t('btn_next_page')"></button>
+            <span class="pager-jump">
+              <input type="number" min="1" :max="Math.max(1,Math.ceil(findingsPage.total/findingsPage.limit))"
+                     x-model="findingsJumpTo" @keydown.enter="findingsGoToPage()"
+                     :placeholder="String(Math.floor(findingsPage.offset/findingsPage.limit)+1)">
+              <button class="ghost sm" @click="findingsGoToPage()" x-text="t('btn_go_page')"></button>
+            </span>
+          </div>
         </div>
 
         <!-- BINARIES -->
@@ -867,6 +950,7 @@
                 <th x-text="t('th_mitigations')"></th><th x-text="t('th_fns')"></th><th x-text="t('th_warnings')"></th>
                 <th x-text="t('th_cves')"></th>
                 <th x-text="t('th_strings')"></th>
+                <th x-text="t('th_md5')"></th>
               </tr></thead>
               <tbody>
                 <template x-for="b in binaries" :key="b.path">
@@ -888,6 +972,7 @@
                     </td>
                     <td><a href="#" @click.prevent="tab='strings'; stringsBinary=b.path"
                            x-text="(b.strings&&b.strings.length)||0"></a></td>
+                    <td class="path" :title="b.md5||''" x-text="b.md5||'—'"></td>
                   </tr>
                 </template>
               </tbody>
@@ -902,6 +987,7 @@
             <table class="bins">
               <thead><tr>
                 <th x-text="t('th_script')"></th><th x-text="t('th_kind')"></th><th x-text="t('th_findings')"></th>
+                <th x-text="t('th_md5')"></th>
               </tr></thead>
               <tbody>
                 <template x-for="s in scripts" :key="s.path">
@@ -912,6 +998,7 @@
                       <a href="#" x-show="s.findings" @click.prevent="goToFindings({q:s.path})" x-text="s.findings"></a>
                       <span x-show="!s.findings">0</span>
                     </td>
+                    <td class="path" :title="s.md5||''" x-text="s.md5||'—'"></td>
                   </tr>
                 </template>
               </tbody>
@@ -947,19 +1034,77 @@
           </div>
         </div>
 
+        <!-- FILES -->
+        <div x-show="tab==='files'">
+          <p class="meta" x-text="t('files_hint')"></p>
+          <template x-if="!files.length"><div class="empty" x-text="t('no_files')"></div></template>
+          <div class="table-wrap" x-show="files.length">
+            <table class="bins">
+              <thead><tr>
+                <th x-text="t('th_path')"></th><th x-text="t('th_kind')"></th>
+                <th x-text="t('th_size')"></th><th x-text="t('th_md5')"></th>
+              </tr></thead>
+              <template x-for="f in files" :key="f.path">
+                <tbody>
+                  <tr>
+                    <td class="path" :title="f.path" @click="openFilePreview(f)"
+                        :style="previewableKind(f.kind) ? 'cursor:pointer' : ''"
+                        x-text="(previewableKind(f.kind) ? (filePreviewPath===f.path ? '▾ ' : '▸ ') : '')+shortPath(f.path)"></td>
+                    <td><span class="chip" :class="fileKindChipClass(f.kind)" x-text="tFileKind(f.kind)"></span></td>
+                    <td x-text="formatSize(f.size)"></td>
+                    <td class="path" :title="f.md5||''" x-text="f.md5||'—'"></td>
+                  </tr>
+                  <!-- Preview renders directly under the clicked row (not at
+                       the bottom of the whole list/page) so opening it never
+                       means scrolling away from what you just clicked. -->
+                  <tr x-show="filePreviewPath === f.path">
+                    <td colspan="4" class="preview-cell">
+                      <div class="filters" style="margin-bottom:8px">
+                        <span class="path" style="flex:1" x-text="f.path"></span>
+                        <button class="ghost sm" @click="filePreviewPath=''" x-text="t('btn_close')"></button>
+                      </div>
+                      <template x-if="filePreviewLoading"><div class="empty" x-text="t('loading')"></div></template>
+                      <template x-if="!filePreviewLoading && filePreviewEntry && filePreviewEntry.error">
+                        <div class="empty" x-text="t('file_preview_error')+': '+filePreviewEntry.error"></div>
+                      </template>
+                      <template x-if="!filePreviewLoading && filePreviewEntry && !filePreviewEntry.error">
+                        <div>
+                          <pre class="code" style="max-height:50vh" x-text="filePreviewEntry.content"></pre>
+                          <p class="meta" x-show="filePreviewEntry.truncated" x-text="t('file_preview_truncated')"></p>
+                        </div>
+                      </template>
+                    </td>
+                  </tr>
+                </tbody>
+              </template>
+            </table>
+          </div>
+          <div class="pager" x-show="filesPage.total > filesPage.limit">
+            <button class="ghost sm" :disabled="filesPage.offset<=0" @click="filesPrevPage()" x-text="t('btn_prev_page')"></button>
+            <span class="sub" x-text="(filesPage.offset+1)+'–'+Math.min(filesPage.offset+filesPage.limit, filesPage.total)+' / '+filesPage.total"></span>
+            <button class="ghost sm" :disabled="filesPage.offset+filesPage.limit>=filesPage.total" @click="filesNextPage()" x-text="t('btn_next_page')"></button>
+            <span class="pager-jump">
+              <input type="number" min="1" :max="Math.max(1,Math.ceil(filesPage.total/filesPage.limit))"
+                     x-model="filesJumpTo" @keydown.enter="filesGoToPage()"
+                     :placeholder="String(Math.floor(filesPage.offset/filesPage.limit)+1)">
+              <button class="ghost sm" @click="filesGoToPage()" x-text="t('btn_go_page')"></button>
+            </span>
+          </div>
+        </div>
+
         <!-- STRINGS -->
         <div x-show="tab==='strings'">
           <div class="filters">
             <select x-model="stringsBinary">
-              <template x-for="b in binaries" :key="b.path">
+              <template x-for="b in stringsSources" :key="b.path">
                 <option :value="b.path" x-text="shortPath(b.path)+' ('+((b.strings&&b.strings.length)||0)+')'"></option>
               </template>
             </select>
             <input type="text" x-model="stringsQuery" :placeholder="t('strings_search_placeholder')">
             <span class="count" x-text="filteredStrings.length+' / '+currentBinaryStrings.length"></span>
           </div>
-          <template x-if="!binaries.length"><div class="empty" x-text="t('no_binaries')"></div></template>
-          <template x-if="binaries.length && !filteredStrings.length"><div class="empty" x-text="t('no_strings_match')"></div></template>
+          <template x-if="!stringsSources.length"><div class="empty" x-text="t('no_strings_sources')"></div></template>
+          <template x-if="stringsSources.length && !filteredStrings.length"><div class="empty" x-text="t('no_strings_match')"></div></template>
           <pre class="code" style="max-height:70vh" x-show="filteredStrings.length" x-text="stringsText"></pre>
           <p class="meta" x-show="stringsTruncated" x-text="t('strings_truncated')"></p>
         </div>
@@ -972,24 +1117,25 @@
           </p>
           <div class="filters">
             <select x-model="sensitiveBinary" @change="computeSensitive()">
-              <option value="" x-text="t('filter_all_binaries')"></option>
-              <template x-for="b in binaries" :key="b.path">
+              <option value="" x-text="t('filter_all_sources')"></option>
+              <template x-for="b in stringsSources" :key="b.path">
                 <option :value="b.path" x-text="shortPath(b.path)"></option>
               </template>
             </select>
-            <span class="count" x-text="sensitiveResults.length"></span>
+            <input type="text" x-model="sensitiveQuery" @input="filterSensitive()" :placeholder="t('sensitive_search_placeholder')">
+            <span class="count" x-text="filteredSensitiveResults.length"></span>
           </div>
-          <template x-if="!binaries.length"><div class="empty" x-text="t('no_binaries')"></div></template>
-          <template x-if="binaries.length && !sensitiveResults.length"><div class="empty" x-text="t('no_sensitive_match')"></div></template>
-          <div class="table-wrap" x-show="sensitiveResults.length">
+          <template x-if="!stringsSources.length"><div class="empty" x-text="t('no_strings_sources')"></div></template>
+          <template x-if="stringsSources.length && !filteredSensitiveResults.length"><div class="empty" x-text="t('no_sensitive_match')"></div></template>
+          <div class="table-wrap" x-show="filteredSensitiveResults.length">
             <table class="bins">
               <thead><tr>
-                <th x-text="t('th_binary')"></th>
+                <th x-text="t('th_source')"></th>
                 <th x-text="t('th_keyword')"></th>
                 <th x-text="t('th_string')"></th>
               </tr></thead>
               <tbody>
-                <template x-for="(r,idx) in sensitiveResults" :key="idx">
+                <template x-for="(r,idx) in sensitivePageItems" :key="sensitivePage.offset+'-'+idx">
                   <tr>
                     <td class="path" :title="r.binary" x-text="shortPath(r.binary)"></td>
                     <td><span class="chip warn" x-text="r.keyword"></span></td>
@@ -999,7 +1145,122 @@
               </tbody>
             </table>
           </div>
+          <div class="pager" x-show="filteredSensitiveResults.length > sensitivePage.limit">
+            <button class="ghost sm" :disabled="sensitivePage.offset<=0" @click="sensitivePrevPage()" x-text="t('btn_prev_page')"></button>
+            <span class="sub" x-text="(sensitivePage.offset+1)+'–'+Math.min(sensitivePage.offset+sensitivePage.limit, filteredSensitiveResults.length)+' / '+filteredSensitiveResults.length"></span>
+            <button class="ghost sm" :disabled="sensitivePage.offset+sensitivePage.limit>=filteredSensitiveResults.length" @click="sensitiveNextPage()" x-text="t('btn_next_page')"></button>
+            <span class="pager-jump">
+              <input type="number" min="1" :max="Math.max(1,Math.ceil(filteredSensitiveResults.length/sensitivePage.limit))"
+                     x-model="sensitiveJumpTo" @keydown.enter="sensitiveGoToPage()"
+                     :placeholder="String(Math.floor(sensitivePage.offset/sensitivePage.limit)+1)">
+              <button class="ghost sm" @click="sensitiveGoToPage()" x-text="t('btn_go_page')"></button>
+            </span>
+          </div>
           <p class="meta" x-show="sensitiveTruncated" x-text="t('sensitive_truncated')"></p>
+        </div>
+
+        <!-- BUSYBOX -->
+        <div x-show="tab==='busybox'">
+          <template x-if="!busyboxAudit.has_busybox">
+            <div class="empty" x-text="t('busybox_none')"></div>
+          </template>
+          <template x-if="busyboxAudit.has_busybox">
+            <div>
+              <h3 style="margin-top:0" x-text="t('busybox_applets_h')"></h3>
+              <p class="meta" x-text="t('busybox_paths_label')+': '+(busyboxAudit.busybox_paths||[]).map(shortPath).join(', ')"></p>
+              <div class="cards">
+                <div class="card"><div class="n sev-low" x-text="busyboxAudit.compiled_in.length"></div><div class="l" x-text="t('busybox_compiled_in')"></div></div>
+                <div class="card"><div class="n sev-crit" x-text="busyboxAudit.missing.length"></div><div class="l" x-text="t('busybox_missing')"></div></div>
+              </div>
+
+              <details style="margin:14px 0">
+                <summary style="cursor:pointer;color:var(--muted)" x-text="t('busybox_show_compiled')"></summary>
+                <div class="kwrow" style="margin-top:10px">
+                  <template x-for="a in busyboxAudit.compiled_in" :key="a">
+                    <span class="chip ok" x-text="a"></span>
+                  </template>
+                </div>
+              </details>
+
+              <h4 x-text="t('busybox_missing_h')"></h4>
+              <p class="meta" x-text="t('busybox_missing_hint')"></p>
+              <template x-if="!busyboxAudit.missing.length"><div class="empty" x-text="t('busybox_missing_none')"></div></template>
+              <div class="kwrow" x-show="busyboxAudit.missing.length">
+                <template x-for="a in busyboxAudit.missing" :key="a">
+                  <span class="chip bad" x-text="a"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <h3 x-text="t('busybox_extra_h')"></h3>
+          <p class="meta" x-text="t('busybox_extra_hint')"></p>
+          <div class="filters">
+            <select x-model="busyboxDirFilter">
+              <option value="" x-text="t('busybox_filter_all_dirs')"></option>
+              <template x-for="d in extraCommandDirs" :key="d">
+                <option :value="d" x-text="d"></option>
+              </template>
+            </select>
+            <input type="text" x-model="busyboxQuery" :placeholder="t('busybox_search_placeholder')">
+            <span class="count" x-text="filteredExtraCommands.length"></span>
+          </div>
+          <template x-if="!extraCommands.length"><div class="empty" x-text="t('busybox_extra_none')"></div></template>
+          <template x-if="extraCommands.length && !filteredExtraCommands.length"><div class="empty" x-text="t('no_files')"></div></template>
+          <div class="table-wrap" x-show="filteredExtraCommands.length">
+            <table class="bins">
+              <thead><tr>
+                <th x-text="t('busybox_th_dir')"></th>
+                <th x-text="t('th_name')"></th>
+                <th x-text="t('th_kind')"></th>
+                <th x-text="t('th_path')"></th>
+              </tr></thead>
+              <template x-for="c in filteredExtraCommands" :key="c.path">
+                <tbody>
+                  <tr>
+                    <td class="path" x-text="c.dir"></td>
+                    <td x-text="c.name"></td>
+                    <td><span class="chip" :class="fileKindChipClass(c.kind)" x-text="tFileKind(c.kind)"></span></td>
+                    <td class="path" :title="c.path" @click="openFilePreview(c)"
+                        :style="previewableKind(c.kind) ? 'cursor:pointer' : ''"
+                        x-text="(previewableKind(c.kind) ? (filePreviewPath===c.path ? '▾ ' : '▸ ') : '')+shortPath(c.path)"></td>
+                  </tr>
+                  <!-- Preview renders directly under the clicked row, same
+                       as the Files tab, instead of at the bottom of the list. -->
+                  <tr x-show="filePreviewPath === c.path">
+                    <td colspan="4" class="preview-cell">
+                      <div class="filters" style="margin-bottom:8px">
+                        <span class="path" style="flex:1" x-text="c.path"></span>
+                        <button class="ghost sm" @click="filePreviewPath=''" x-text="t('btn_close')"></button>
+                      </div>
+                      <template x-if="filePreviewLoading"><div class="empty" x-text="t('loading')"></div></template>
+                      <template x-if="!filePreviewLoading && filePreviewEntry && filePreviewEntry.error">
+                        <div class="empty" x-text="t('file_preview_error')+': '+filePreviewEntry.error"></div>
+                      </template>
+                      <template x-if="!filePreviewLoading && filePreviewEntry && !filePreviewEntry.error">
+                        <div>
+                          <pre class="code" style="max-height:50vh" x-text="filePreviewEntry.content"></pre>
+                          <p class="meta" x-show="filePreviewEntry.truncated" x-text="t('file_preview_truncated')"></p>
+                        </div>
+                      </template>
+                    </td>
+                  </tr>
+                </tbody>
+              </template>
+            </table>
+          </div>
+          <p class="meta" x-show="busyboxAudit.truncated_extra" x-text="t('busybox_extra_truncated')"></p>
+
+          <h3 x-text="t('busybox_initd_h')"></h3>
+          <template x-if="!initScripts.length"><div class="empty" x-text="t('busybox_initd_none')"></div></template>
+          <template x-for="s in initScripts" :key="s.path">
+            <details style="margin-bottom:8px">
+              <summary style="cursor:pointer" x-text="shortPath(s.path)"></summary>
+              <pre class="code" style="max-height:50vh" x-text="s.content"></pre>
+              <p class="meta" x-show="s.truncated" x-text="t('busybox_initd_truncated')"></p>
+            </details>
+          </template>
+          <p class="meta" x-show="busyboxAudit.truncated_init" x-text="t('busybox_initd_list_truncated')"></p>
         </div>
       </div>
     </template>
@@ -1043,6 +1304,10 @@ const I18N = {
   card_high:            { en: "High",                                  zh: "高危" },
   card_binaries:        { en: "Binaries",                              zh: "二进制数" },
   card_cves:            { en: "CVEs",                                 zh: "CVE 数" },
+  fw_kernel:            { en: "Kernel",                                zh: "内核版本" },
+  fw_arch:              { en: "Architecture",                          zh: "架构" },
+  fw_files:             { en: "Files scanned",                         zh: "扫描文件数" },
+  fw_size:              { en: "Firmware size",                         zh: "固件大小" },
   by_severity:          { en: "By severity",                          zh: "按严重度" },
   by_vuln_class:        { en: "By vulnerability class",                zh: "按漏洞类别" },
   filter_all_classes:   { en: "All classes",                          zh: "全部类别" },
@@ -1065,6 +1330,10 @@ const I18N = {
   btn_false_positive:   { en: "False positive",                       zh: "误报" },
   btn_accept_risk:      { en: "Accept risk",                          zh: "接受风险" },
   btn_reset:            { en: "Reset",                                zh: "重置" },
+  btn_prev_page:        { en: "← Prev",                                zh: "← 上一页" },
+  btn_next_page:        { en: "Next →",                                zh: "下一页 →" },
+  btn_go_page:          { en: "Go",                                    zh: "跳转" },
+  sensitive_search_placeholder: { en: "filter matches (text/keyword/source)…", zh: "过滤结果(内容/关键词/来源)…" },
   th_binary:            { en: "Binary",                               zh: "二进制" },
   th_arch:              { en: "Arch",                                 zh: "架构" },
   th_libc:              { en: "libc",                                 zh: "libc" },
@@ -1073,12 +1342,44 @@ const I18N = {
   th_warnings:          { en: "Warnings",                             zh: "警告" },
   th_cves:              { en: "CVEs",                                 zh: "CVE" },
   th_strings:           { en: "Strings",                              zh: "字符串数" },
+  th_md5:               { en: "MD5",                                  zh: "MD5" },
   tab_strings:          { en: "Strings",                              zh: "字符串" },
   strings_search_placeholder: { en: "search extracted strings…",      zh: "搜索提取出的字符串…" },
   no_binaries:          { en: "No binaries in this report.",          zh: "该报告中没有二进制。" },
+  th_source:            { en: "Source",                               zh: "来源" },
+  no_strings_sources:   { en: "No binaries, scripts, or config files with extracted strings in this report.",
+                           zh: "该报告中没有可提取字符串的二进制、脚本或配置文件。" },
+  filter_all_sources:   { en: "All (binaries, scripts, configs)",     zh: "全部(二进制/脚本/配置文件)" },
   tab_scripts:          { en: "Scripts",                              zh: "脚本" },
   th_script:            { en: "Script",                               zh: "脚本" },
   th_kind:              { en: "Kind",                                 zh: "类型" },
+  th_name:              { en: "Name",                                 zh: "名称" },
+  tab_busybox:          { en: "BusyBox",                              zh: "BusyBox对比" },
+  busybox_none:         { en: "No busybox binary found in this firmware — nothing to compare applets against.",
+                           zh: "该固件中未找到busybox二进制，无法进行指令对比。" },
+  busybox_applets_h:    { en: "BusyBox applet comparison",            zh: "BusyBox 指令对比" },
+  busybox_paths_label:  { en: "busybox binary",                       zh: "busybox 二进制" },
+  busybox_compiled_in:  { en: "Applets compiled in",                  zh: "已编译的指令" },
+  busybox_missing:      { en: "Missing (crippled)",                   zh: "被阉割(缺失)" },
+  busybox_show_compiled:{ en: "Show compiled-in applets",             zh: "展开查看已编译的指令" },
+  busybox_missing_h:    { en: "Missing applets",                      zh: "被阉割的指令" },
+  busybox_missing_hint: { en: "Reference BusyBox applets not found as compiled-in strings in this busybox build — could be deliberate hardening, or something stripped for other reasons. Heuristic (string-based), not exact.",
+                           zh: "参考列表中的标准BusyBox指令，未在该busybox二进制中检测到——可能是刻意精简加固，也可能另有原因被移除。此为启发式(字符串匹配)检测，非绝对精确。" },
+  busybox_missing_none: { en: "None — every reference applet was found.", zh: "无——参考列表中的指令全部找到。" },
+  busybox_extra_h:      { en: "Extra commands beyond BusyBox",        zh: "比BusyBox多出来的指令" },
+  busybox_extra_hint:   { en: "Standalone executables under any bin/sbin directory whose name isn't one of this busybox build's compiled-in applets — across every such directory in the tree, not just the top-level /bin, /sbin.",
+                           zh: "各个bin/sbin目录下、名称不属于该busybox已编译指令集的独立可执行文件——覆盖整个目录树中所有此类路径，不仅是顶层的/bin、/sbin。" },
+  busybox_search_placeholder: { en: "filter by name or path…",        zh: "按名称或路径过滤…" },
+  busybox_extra_none:  { en: "No extra commands found beyond busybox.", zh: "没有发现比busybox多出来的指令。" },
+  busybox_th_dir:      { en: "Directory",                             zh: "目录" },
+  busybox_filter_all_dirs: { en: "All bin/sbin directories",          zh: "全部bin/sbin目录" },
+  busybox_extra_truncated: { en: "List truncated — too many extra commands to show all.",
+                              zh: "列表已截断——多出来的指令数量过多，未能全部显示。" },
+  busybox_initd_h:     { en: "/etc/init.d scripts",                   zh: "/etc/init.d 脚本" },
+  busybox_initd_none:  { en: "No init.d scripts found in this target.", zh: "该目标中没有找到 init.d 脚本。" },
+  busybox_initd_truncated: { en: "(content truncated)",               zh: "(内容已截断)" },
+  busybox_initd_list_truncated: { en: "Script list truncated — too many init.d scripts to show all.",
+                                   zh: "脚本列表已截断——init.d 脚本数量过多，未能全部显示。" },
   th_findings:          { en: "Findings",                             zh: "发现数" },
   no_scripts:           { en: "No shell/PHP/Python/Lua scripts found in this target.",
                            zh: "该目标中没有找到 shell/PHP/Python/Lua 脚本。" },
@@ -1088,6 +1389,19 @@ const I18N = {
   th_binaries_col:      { en: "Binaries",                             zh: "二进制数" },
   no_components:        { en: "No known software components detected (the offline DB only recognizes a handful of banner strings — busybox/openssl/dropbear/uclibc/lighttpd).",
                            zh: "未检测到已知软件组件(离线数据库目前只识别少数几种 banner 字符串:busybox/openssl/dropbear/uclibc/lighttpd)。" },
+  tab_files:            { en: "Files",                                 zh: "文件" },
+  files_hint:           { en: "Every file under the scanned target, not just ELF binaries and recognized scripts — this is the full listing. Click a config file or script's path to preview its content.",
+                           zh: "扫描目标下的所有文件,不只是 ELF 二进制和识别出的脚本——这是完整清单。点击配置文件或脚本的路径可预览其内容。" },
+  no_files:             { en: "No files found in this target.",        zh: "该目标中没有文件。" },
+  th_size:              { en: "Size",                                  zh: "大小" },
+  btn_close:            { en: "Close",                                 zh: "关闭" },
+  file_preview_error:   { en: "Could not load preview",                zh: "无法加载预览" },
+  file_preview_truncated: { en: "(content truncated — file is larger than the preview limit)",
+                             zh: "(内容已截断——文件超出预览大小上限)" },
+  file_kind_binary:     { en: "binary",                                 zh: "二进制" },
+  file_kind_script:     { en: "script",                                 zh: "脚本" },
+  file_kind_symlink:    { en: "symlink",                                zh: "符号链接" },
+  file_kind_other:      { en: "other",                                  zh: "其他" },
   no_strings_match:     { en: "No strings match the filter.",         zh: "没有符合筛选条件的字符串。" },
   strings_truncated:    { en: "Showing the first 2000 matches — narrow your search to see more precisely.",
                            zh: "仅显示前 2000 条匹配结果——缩小搜索范围可看到更精确的结果。" },
@@ -1187,6 +1501,16 @@ const I18N = {
                            zh: "已修复/消失的发现(A 有、B 没有)" },
   compare_common:       { en: "Unchanged (in both)",                 zh: "两次都有(未变化)" },
   compare_none:         { en: "None.",                               zh: "无。" },
+  compare_counts:       { en: "Binary / script counts",              zh: "二进制/脚本数量" },
+  compare_files:        { en: "File changes (by path + MD5)",        zh: "文件变化(按路径+MD5)" },
+  compare_status:       { en: "Status",                              zh: "状态" },
+  compare_status_added: { en: "Added",                               zh: "新增" },
+  compare_status_removed: { en: "Removed",                           zh: "移除" },
+  compare_modified:     { en: "Modified",                            zh: "已修改" },
+  compare_unchanged:    { en: "Unchanged files",                     zh: "未变化文件数" },
+  compare_strings:      { en: "String changes",                     zh: "字符串变化" },
+  compare_sensitive:    { en: "Sensitive string changes",            zh: "敏感字符串变化" },
+  th_path:              { en: "Path",                                zh: "路径" },
   export_filtered_csv:  { en: "Export filtered (CSV)",                zh: "导出筛选结果(CSV)" },
   export_filtered_json: { en: "Export filtered (JSON)",               zh: "导出筛选结果(JSON)" },
   triage_history_label: { en: "Triage history",                      zh: "分诊记录" },
@@ -1225,7 +1549,35 @@ function app() {
     SEVS, SHORT,
     theme: localStorage.getItem("ifda-theme") || "midnight",
     lang: localStorage.getItem("ifda-lang") || "en",
-    jobs: [], selectedId: null, report: null, tab: "dashboard",
+    jobs: [], selectedId: null, tab: "dashboard",
+    // Report data is served paginated/filtered server-side (findings, in
+    // particular, used to be rendered in full client-side — thousands of
+    // reactive Alpine components for a large scan — which is what crashed
+    // the tab). `summary` is the one thing still safe to load in full: it's
+    // just aggregate counts, however big the underlying scan was.
+    summary: null,
+    findingsPage: { items: [], total: 0, offset: 0, limit: 50 },
+    binariesPage: { items: [], total: 0 },
+    scriptsPage: { items: [], total: 0 },
+    componentsPage: { items: [], total: 0 },
+    // Files can genuinely run into the thousands (unlike binaries/scripts/
+    // components, which are loaded in full via ?all=1 below) -- real
+    // pagination, same pattern as findingsPage.
+    filesPage: { items: [], total: 0, offset: 0, limit: 200 },
+    // Separate from filesPage (which stays paginated for the Files tab):
+    // the Strings/Sensitive tabs need every non-binary file's extracted
+    // strings at once, the same way binaries/scripts already load via
+    // ?all=1 -- a keyword search can't work against just one page.
+    filesStringsAll: [],
+    // BusyBox applet audit + bin/sbin extra commands + /etc/init.d dump
+    // (see ifda/inventory/busybox_audit.py) -- small enough to load whole,
+    // unlike findings/files.
+    busyboxAudit: { has_busybox: false, compiled_in: [], missing: [], extra_commands: [], init_scripts: [] },
+    // Files tab content preview (config files, shell scripts, ... -- not
+    // binaries/symlinks): fetched on demand and cached per path so toggling
+    // the same row open/closed doesn't re-fetch.
+    filePreviewPath: "", filePreviewLoading: false, filePreviewCache: {},
+    busyboxDirFilter: "", busyboxQuery: "",
     target: "/bin/ls", uploading: false, sse: null,
     decompile: false, ghidraAvailable: true,
     deleteSelected: [],
@@ -1235,11 +1587,11 @@ function app() {
     captchaId: "", captchaImg: "", captchaAnswer: "",
     showChangePassword: false, oldPassword: "", newPassword: "", newPassword2: "", changePasswordError: "", changePasswordOk: false,
     actor: localStorage.getItem("ifda-actor") || "",
-    compareMode: false, compareA: "", compareB: "", compareResult: null, comparing: false,
+    compareMode: false, compareA: "", compareB: "", compareResult: null, comparing: false, compareProgress: 0,
     showVulnDB: true, vulnDB: null, vulnDBLoading: false, vulnDBCheckerFilter: "",
     showSensitiveDict: false,
     triageHistoryCache: {},
-    reportLoadError: "",
+    reportLoadError: "", reportLoading: false, reportLoadProgress: 0,
     f: { sev:{critical:true,high:true,medium:true,low:true,info:true},
          vclass:"", triage:"", q:"", minConf:0 },
     sort: "severity",
@@ -1250,7 +1602,12 @@ function app() {
         return Array.isArray(saved) && saved.length ? saved : DEFAULT_SENSITIVE_KEYWORDS.slice();
       } catch (e) { return DEFAULT_SENSITIVE_KEYWORDS.slice(); }
     })(),
-    newKeyword: "", sensitiveBinary: "", sensitiveResults: [],
+    newKeyword: "", sensitiveBinary: "", sensitiveResults: [], sensitiveQuery: "",
+    // Client-side pager: sensitiveResults is already fully in memory (capped
+    // at 3000 by computeSensitive), so paging it is just a slice -- no
+    // server round trip needed, unlike findings/files.
+    sensitivePage: { offset: 0, limit: 200 },
+    findingsJumpTo: "", filesJumpTo: "", sensitiveJumpTo: "",
 
     async init() {
       this.applyTheme();
@@ -1321,7 +1678,7 @@ function app() {
       this.authToken = ""; localStorage.removeItem("ifda-token");
       this.username = ""; localStorage.removeItem("ifda-username");
       this.showUserMenu = false;
-      this.jobs = []; this.report = null; this.selectedId = null; this.closeSSE();
+      this.jobs = []; this.summary = null; this.selectedId = null; this.closeSSE();
       this.showLogin = this.loginRequired;
     },
     openChangePassword() {
@@ -1362,8 +1719,8 @@ function app() {
     tTriage(s) { return this.t("triage_" + (s || "new")); },
     tStatus(s) { return this.t("status_" + s); },
     summaryText() {
-      const b = (this.report && this.report.binaries ? this.report.binaries.length : 0);
-      const n = this.findings.length;
+      const b = (this.summary && this.summary.binaries) || 0;
+      const n = (this.summary && this.summary.findings) || 0;
       return this.lang === "zh" ? `${b} 个二进制 · ${n} 个发现` : `${b} binaries · ${n} findings`;
     },
     async refreshJobs() {
@@ -1391,7 +1748,7 @@ function app() {
     },
     select(id) {
       this.compareMode = false; this.showVulnDB = false; this.showSensitiveDict = false;
-      this.selectedId = id; this.report = null; this.tab = "dashboard";
+      this.selectedId = id; this.summary = null; this.tab = "dashboard";
       if (this.sse) { this.sse.close(); this.sse = null; }
       const job = this.jobs.find(x => x.id === id);
       if (job && job.status === "completed") { this.loadReport(id); return; }
@@ -1407,33 +1764,183 @@ function app() {
       this.sse.onerror = () => this.closeSSE();
     },
     closeSSE() { if (this.sse) { this.sse.close(); this.sse = null; } },
+    // Loads the lightweight summary plus one page each of findings/binaries/
+    // scripts/components — never the whole report in one response the way
+    // this used to work (that's what let a large scan crash the tab).
     async loadReport(id) {
       this.reportLoadError = "";
+      this.reportLoading = true;
+      this.reportLoadProgress = 0;
       try {
-        const r = await this.apiFetch(`/api/jobs/${id}/report`);
-        if (r.ok) {
-          this.report = await r.json();
-          // Filters/selections (severity toggles, vuln-class, the Sensitive
-          // tab's per-binary picker, the Strings tab's binary picker) are
-          // scoped to whichever report was loaded when they were set. Left
-          // alone across a job switch, a stale severity-only filter (e.g.
-          // from an earlier goToFindings({sevOnly:'high'}) drill-down) or a
-          // sensitiveBinary/stringsBinary path that doesn't exist in the new
-          // report silently zeroes out findings/results with no error —
-          // exactly the "numbers don't show" symptom. Reset/recompute them
-          // here, once, for every report load rather than only lazily when
-          // each tab happens to be clicked.
-          this.resetFilters();
-          this.sensitiveBinary = "";
-          this.computeSensitive();
-          this.onStringsTab();
+        const r = await this.apiFetch(`/api/jobs/${id}/summary`);
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          this.reportLoadError = j.error || `HTTP ${r.status}`;
           return;
         }
-        const j = await r.json().catch(() => ({}));
-        this.reportLoadError = j.error || `HTTP ${r.status}`;
+        this.summary = await r.json();
+        this.filePreviewPath = ""; this.filePreviewCache = {};
+        // Filters/selections (severity toggles, vuln-class, the Sensitive
+        // tab's per-binary picker, the Strings tab's binary picker) are
+        // scoped to whichever report was loaded when they were set. Left
+        // alone across a job switch, a stale severity-only filter (e.g.
+        // from an earlier goToFindings({sevOnly:'high'}) drill-down) or a
+        // sensitiveBinary/stringsBinary path that doesn't exist in the new
+        // report silently zeroes out findings/results with no error —
+        // exactly the "numbers don't show" symptom. Reset/recompute them
+        // here, once, for every report load rather than only lazily when
+        // each tab happens to be clicked.
+        this.resetFilters();
+
+        // Percentage progress across summary (already fetched, 1 step) plus
+        // each of these parallel fetches, so the loading view shows real
+        // movement instead of an indeterminate spinner for however long a
+        // large scan's findings/files/etc. take to page in.
+        const steps = [
+          this.loadFindings(), this.loadBinaries(), this.loadScripts(),
+          this.loadComponents(), this.loadFiles(), this.loadFilesStringsAll(),
+          this.loadBusyboxAudit(),
+        ];
+        const total = steps.length + 1;
+        let done = 1;
+        this.reportLoadProgress = Math.round((done / total) * 100);
+        await Promise.all(steps.map(p => p.then(() => {
+          done++;
+          this.reportLoadProgress = Math.round((done / total) * 100);
+        })));
+
+        this.sensitiveBinary = "";
+        this.computeSensitive();
+        this.onStringsTab();
       } catch (e) {
         this.reportLoadError = String(e);
+      } finally {
+        this.reportLoading = false;
       }
+    },
+    // Query params mirror the findings filter bar (server-side now, not
+    // client-side array filtering) — offset/limit for paging, sev repeated
+    // once per checked severity, the rest 1:1 with `this.f`/`this.sort`.
+    findingsQueryParams(overrides = {}) {
+      const p = new URLSearchParams();
+      const offset = overrides.offset ?? this.findingsPage.offset;
+      const limit = overrides.limit ?? this.findingsPage.limit;
+      p.set("offset", offset); p.set("limit", limit);
+      SEVS.forEach(s => { if (this.f.sev[s]) p.append("sev", s); });
+      if (this.f.vclass) p.set("vclass", this.f.vclass);
+      if (this.f.triage) p.set("triage", this.f.triage);
+      if (this.f.minConf) p.set("min_conf", this.f.minConf);
+      if (this.f.q) p.set("q", this.f.q);
+      p.set("sort", this.sort);
+      return p;
+    },
+    async loadFindings(resetOffset = true) {
+      if (resetOffset) this.findingsPage.offset = 0;
+      const p = this.findingsQueryParams();
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/findings?${p}`);
+      if (r.ok) this.findingsPage = await r.json();
+    },
+    findingsPrevPage() {
+      if (this.findingsPage.offset <= 0) return;
+      this.findingsPage.offset = Math.max(0, this.findingsPage.offset - this.findingsPage.limit);
+      this.loadFindings(false);
+    },
+    findingsNextPage() {
+      if (this.findingsPage.offset + this.findingsPage.limit >= this.findingsPage.total) return;
+      this.findingsPage.offset += this.findingsPage.limit;
+      this.loadFindings(false);
+    },
+    findingsGoToPage() {
+      this.findingsPage.offset = this.clampPageOffset(this.findingsJumpTo, this.findingsPage.total, this.findingsPage.limit);
+      this.findingsJumpTo = "";
+      this.loadFindings(false);
+    },
+    // Loaded in full (?all=1, no LIMIT server-side): binaries/scripts/
+    // components are never remotely as numerous as findings or files in
+    // practice, so simplicity wins over paginating three more tabs.
+    async loadPagedListAll(kind) {
+      const page = kind + "Page"; // "binaries" -> "binariesPage", etc.
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/${kind}?all=1`);
+      if (r.ok) this[page] = await r.json();
+    },
+    loadBinaries() { return this.loadPagedListAll("binaries"); },
+    loadScripts() { return this.loadPagedListAll("scripts"); },
+    loadComponents() { return this.loadPagedListAll("components"); },
+    async loadFiles(resetOffset = true) {
+      if (resetOffset) this.filesPage.offset = 0;
+      const p = new URLSearchParams({ offset: this.filesPage.offset, limit: this.filesPage.limit });
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/files?${p}`);
+      if (r.ok) this.filesPage = await r.json();
+    },
+    filesPrevPage() {
+      if (this.filesPage.offset <= 0) return;
+      this.filesPage.offset = Math.max(0, this.filesPage.offset - this.filesPage.limit);
+      this.loadFiles(false);
+    },
+    async loadFilesStringsAll() {
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/files?all=1`);
+      if (r.ok) this.filesStringsAll = (await r.json()).items || [];
+    },
+    async loadBusyboxAudit() {
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/busybox`);
+      this.busyboxAudit = r.ok ? await r.json() : {};
+      this.busyboxDirFilter = ""; this.busyboxQuery = "";
+    },
+    // Preview only makes sense for text-ish, non-ELF files -- config files
+    // and recognized scripts, exactly what the Files tab can't show anywhere
+    // else (Binaries/Scripts tabs only cover their own kind, and a binary's
+    // "content" is already shown as disassembly/strings, not raw bytes).
+    previewableKind(kind) { return kind === "script" || kind === "other"; },
+    async openFilePreview(f) {
+      if (!this.previewableKind(f.kind)) return;
+      if (this.filePreviewPath === f.path) { this.filePreviewPath = ""; return; } // toggle closed
+      this.filePreviewPath = f.path;
+      if (this.filePreviewCache[f.path]) return; // already fetched this job-load
+      this.filePreviewLoading = true;
+      try {
+        const r = await this.apiFetch(`/api/jobs/${this.selectedId}/file-content?path=${encodeURIComponent(f.path)}`);
+        const body = await r.json().catch(() => ({}));
+        this.filePreviewCache[f.path] = r.ok
+          ? { content: body.content, truncated: body.truncated }
+          : { error: body.error || `HTTP ${r.status}` };
+      } catch (e) {
+        this.filePreviewCache[f.path] = { error: String(e) };
+      } finally {
+        this.filePreviewLoading = false;
+      }
+    },
+    get filePreviewEntry() { return this.filePreviewCache[this.filePreviewPath] || null; },
+    filesNextPage() {
+      if (this.filesPage.offset + this.filesPage.limit >= this.filesPage.total) return;
+      this.filesPage.offset += this.filesPage.limit;
+      this.loadFiles(false);
+    },
+    filesGoToPage() {
+      this.filesPage.offset = this.clampPageOffset(this.filesJumpTo, this.filesPage.total, this.filesPage.limit);
+      this.filesJumpTo = "";
+      this.loadFiles(false);
+    },
+    sensitivePrevPage() {
+      if (this.sensitivePage.offset <= 0) return;
+      this.sensitivePage.offset = Math.max(0, this.sensitivePage.offset - this.sensitivePage.limit);
+    },
+    sensitiveNextPage() {
+      if (this.sensitivePage.offset + this.sensitivePage.limit >= this.filteredSensitiveResults.length) return;
+      this.sensitivePage.offset += this.sensitivePage.limit;
+    },
+    sensitiveGoToPage() {
+      this.sensitivePage.offset = this.clampPageOffset(
+        this.sensitiveJumpTo, this.filteredSensitiveResults.length, this.sensitivePage.limit);
+      this.sensitiveJumpTo = "";
+    },
+    // Shared by every "jump to page N" control: 1-based page number -> a
+    // valid, clamped 0-based offset for that pager's own total/limit.
+    clampPageOffset(pageInput, total, limit) {
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      let page = parseInt(pageInput, 10);
+      if (!Number.isFinite(page) || page < 1) page = 1;
+      if (page > totalPages) page = totalPages;
+      return (page - 1) * limit;
     },
     resetFilters() {
       this.f = { sev:{critical:true,high:true,medium:true,low:true,info:true},
@@ -1441,38 +1948,50 @@ function app() {
     },
 
     get selJob() { return this.jobs.find(x => x.id === this.selectedId); },
-    get findings() { return this.report ? (this.report.findings||[]) : []; },
-    get binaries() { return this.report ? (this.report.binaries||[]) : []; },
-    get scripts() { return this.report ? (this.report.scripts||[]) : []; },
-    get components() { return this.report ? (this.report.components||[]) : []; },
-    get vclasses() { return [...new Set(this.findings.map(f => f.vuln_class))].sort(); },
-    get cveCount() { return new Set(this.findings.flatMap(f => f.cve_ids||[])).size; },
-    get classCounts() {
-      const m = {}; this.findings.forEach(f => m[f.vuln_class]=(m[f.vuln_class]||0)+1);
-      return Object.entries(m).map(([k,n])=>({k,n})).sort((a,b)=>b.n-a.n);
+    // These now reflect one loaded page each (findings: the current filtered
+    // page; binaries/scripts/components: a single generous page — those
+    // three were never the crash source, so aren't given pager UI). Counts
+    // for the dashboard/pct() come from `summary` instead, which is always
+    // the true total regardless of what's paged in.
+    get findings() { return this.findingsPage.items || []; },
+    get binaries() { return this.binariesPage.items || []; },
+    get scripts() { return this.scriptsPage.items || []; },
+    get components() { return this.componentsPage.items || []; },
+    get files() { return this.filesPage.items || []; },
+    get extraCommands() { return this.busyboxAudit.extra_commands || []; },
+    get initScripts() { return this.busyboxAudit.init_scripts || []; },
+    // Every distinct bin/sbin directory an extra command was found under
+    // ("不同路径下的bin/sbin文件夹" -- there's usually more than one: /bin,
+    // /usr/bin, /usr/sbin, vendor-specific ones), for the directory filter.
+    get extraCommandDirs() {
+      return [...new Set(this.extraCommands.map(c => c.dir))].sort();
     },
-    sevCount(s) { return this.findings.filter(f => f.severity === s).length; },
-    pct(n) { const max = Math.max(1, ...SEVS.map(s=>this.sevCount(s)), ...this.classCounts.map(c=>c.n)); return Math.round(100*n/max); },
-    get filtered() {
-      const rank = {critical:4,high:3,medium:2,low:1,info:0};
-      const q = (this.f.q||"").toLowerCase();
-      let out = this.findings.filter(f => {
-        if (!this.f.sev[f.severity]) return false;
-        if (this.f.vclass && f.vuln_class !== this.f.vclass) return false;
-        if (this.f.triage && (f.triage||"new") !== this.f.triage) return false;
-        if (f.confidence < this.f.minConf) return false;
-        if (q) {
-          const hay = (f.title+" "+f.description+" "+f.vuln_class+" "+f.component+" "+
-            (f.cve_ids||[]).join(" ")+" "+
-            (f.evidence||[]).map(e=>(e.binary||"")+" "+(e.snippet||"")+" "+(e.function||"")).join(" ")).toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
+    get filteredExtraCommands() {
+      const q = (this.busyboxQuery||"").trim().toLowerCase();
+      return this.extraCommands.filter(c => {
+        if (this.busyboxDirFilter && c.dir !== this.busyboxDirFilter) return false;
+        if (q && !c.name.toLowerCase().includes(q) && !c.path.toLowerCase().includes(q)) return false;
         return true;
       });
-      out.sort((a,b) => this.sort==="confidence"
-        ? b.confidence-a.confidence
-        : (rank[b.severity]-rank[a.severity]) || (b.confidence-a.confidence));
-      return out;
+    },
+    get vclasses() { return Object.keys((this.summary && this.summary.by_vuln_class) || {}).sort(); },
+    get cveCount() { return (this.summary && this.summary.cve_count) || 0; },
+    get classCounts() {
+      const m = (this.summary && this.summary.by_vuln_class) || {};
+      return Object.entries(m).map(([k,n])=>({k,n})).sort((a,b)=>b.n-a.n);
+    },
+    sevCount(s) { return (this.summary && this.summary.by_severity[s]) || 0; },
+    pct(n) { const max = Math.max(1, ...SEVS.map(s=>this.sevCount(s)), ...this.classCounts.map(c=>c.n)); return Math.round(100*n/max); },
+    formatSize(bytes) {
+      if (!bytes) return "0 B";
+      const units = ["B","KB","MB","GB","TB"];
+      let i = 0, n = bytes;
+      while (n >= 1024 && i < units.length-1) { n /= 1024; i++; }
+      return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
+    },
+    tFileKind(kind) { return this.t("file_kind_" + (kind || "other")); },
+    fileKindChipClass(kind) {
+      return { binary: "ok", script: "warn", symlink: "neutral", other: "neutral" }[kind] || "neutral";
     },
     async setTriage(f, state) {
       const r = await this.apiFetch(`/api/jobs/${this.selectedId}/triage`, {method:"POST",
@@ -1490,15 +2009,28 @@ function app() {
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     },
-    exportFilteredJSON() {
-      this.downloadBlob(JSON.stringify(this.filtered, null, 2), "application/json",
+    // Export means "everything matching the current filters", not just
+    // whatever page happens to be loaded, so these fetch a fresh unpaginated
+    // copy from the server (?all=1 -- no LIMIT at all server-side) rather
+    // than using `findings`.
+    async fetchAllMatchingFindings() {
+      const p = this.findingsQueryParams({ offset: 0 });
+      p.set("all", "1");
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/findings?${p}`);
+      const j = await r.json();
+      return j.items || [];
+    },
+    async exportFilteredJSON() {
+      const items = await this.fetchAllMatchingFindings();
+      this.downloadBlob(JSON.stringify(items, null, 2), "application/json",
         `ifda-${this.selectedId}-filtered.json`);
     },
-    exportFilteredCSV() {
+    async exportFilteredCSV() {
+      const items = await this.fetchAllMatchingFindings();
       const cols = ["id","severity","confidence","vuln_class","title","component","rule","triage","cve_ids","description"];
       const esc = v => `"${String(v==null?"":v).replace(/"/g,'""')}"`;
       const rows = [cols.join(",")];
-      for (const f of this.filtered) {
+      for (const f of items) {
         rows.push(cols.map(c => {
           if (c === "cve_ids") return esc((f.cve_ids||[]).join("; "));
           return esc(f[c]);
@@ -1533,7 +2065,7 @@ function app() {
       if (!r.ok) { alert(body.error || "delete failed"); return; }
       this.jobs = this.jobs.filter(x => x.id !== id);
       if (this.selectedId === id) {
-        this.selectedId = null; this.report = null; this.closeSSE();
+        this.selectedId = null; this.summary = null; this.closeSSE();
       }
       const i = this.deleteSelected.indexOf(id);
       if (i >= 0) this.deleteSelected.splice(i, 1);
@@ -1592,18 +2124,112 @@ function app() {
     },
     async runCompare() {
       if (!this.compareA || !this.compareB) return;
-      this.comparing = true; this.compareResult = null;
+      this.comparing = true; this.compareResult = null; this.compareProgress = 0;
       try {
-        const [ra, rb] = await Promise.all([
-          this.apiFetch(`/api/jobs/${this.compareA}/report`).then(r => r.json()),
-          this.apiFetch(`/api/jobs/${this.compareB}/report`).then(r => r.json()),
+        // Checking r.ok matters here specifically: an expired/invalid auth
+        // token, a deleted job, or any other server error still returns a
+        // parseable JSON body (an {"error": ...} object, not a report) --
+        // without this check, that body's missing `findings`/`files` arrays
+        // silently read as "this side has nothing", producing a wildly
+        // misleading diff (every one of A's findings shown as "removed",
+        // none "common") instead of a clear error.
+        const fetchReport = async (jobId) => {
+          const r = await this.apiFetch(`/api/jobs/${jobId}/report`);
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(`${jobId}: ${body.error || `HTTP ${r.status}`}`);
+          this.compareProgress += 50; // each of the two report fetches is half the work
+          return body;
+        };
+        const [ra, rb] = await Promise.all([fetchReport(this.compareA), fetchReport(this.compareB)]);
+
+        // Relative, not absolute: A and B are almost always two
+        // independently-extracted firmware trees (e.g. old vs. new firmware
+        // images, or two different partitions like bank_A/bank_B) with
+        // different absolute roots, so comparing raw absolute paths would
+        // make every single file/finding look like an unrelated add+remove
+        // pair even when nothing actually changed.
+        const relPath = (path, root) => (root && path.startsWith(root)) ? path.slice(root.length).replace(/^\/+/, "") : path;
+
+        // Finding identity for cross-job matching. NOT the same as f.id:
+        // f.id (Finding.fingerprint() in model.py) bakes in the *absolute*
+        // evidence path, so two scans of the same binary under different
+        // extraction roots always produced different ids -- "common" was
+        // silently empty and everything looked added+removed even for
+        // byte-identical firmware. Rebuild the same rule|vuln_class|loc|cves
+        // key here with the evidence path relativized to each job's target.
+        const findingKey = (f, root) => {
+          const loc = (f.evidence||[]).map(e =>
+            `${relPath(e.binary||"", root)}:${e.function||""}:${e.address||0}:${e.snippet||""}`).join(";");
+          const cves = [...(f.cve_ids||[])].sort().join(",");
+          return `${f.rule}|${f.vuln_class}|${loc}|${cves}`;
+        };
+        const aByKey = new Map((ra.findings||[]).map(f => [findingKey(f, ra.target), f]));
+        const bByKey = new Map((rb.findings||[]).map(f => [findingKey(f, rb.target), f]));
+
+        // File-level diff over the *complete* file listing (ra.files/rb.files
+        // -- every file in the tree, not just ELF binaries + recognized
+        // scripts). Falls back to binaries+scripts for jobs ingested before
+        // the full file listing existed. Keyed by relative path, with MD5 to
+        // tell "modified" (same relative path, different content) apart from
+        // a plain add/remove.
+        const filesA = (ra.files && ra.files.length) ? ra.files : [...(ra.binaries||[]), ...(ra.scripts||[])];
+        const filesB = (rb.files && rb.files.length) ? rb.files : [...(rb.binaries||[]), ...(rb.scripts||[])];
+        const aByPath = new Map(filesA.map(f => [relPath(f.path, ra.target), f.md5||""]));
+        const bByPath = new Map(filesB.map(f => [relPath(f.path, rb.target), f.md5||""]));
+        const fileDiff = { added: [], removed: [], modified: [], unchangedCount: 0 };
+        for (const [path, md5] of bByPath) {
+          if (!aByPath.has(path)) fileDiff.added.push({path, md5});
+          else if (aByPath.get(path) !== md5) fileDiff.modified.push({path, md5A: aByPath.get(path), md5B: md5});
+          else fileDiff.unchangedCount++;
+        }
+        for (const [path, md5] of aByPath) {
+          if (!bByPath.has(path)) fileDiff.removed.push({path, md5});
+        }
+
+        // String diff: aggregate every extracted string on each side into a
+        // set, then diff the sets. Sourced from binaries *and* files (configs/
+        // scripts carry their own extracted strings too -- see
+        // stringsSources), not just ELF binaries, otherwise a credential added
+        // only to a config file would never show up here. Capped for display
+        // -- a large firmware can have tens of thousands of distinct strings.
+        const STR_CAP = 2000;
+        const allStrings = (rep) => new Set([
+          ...(rep.binaries||[]).flatMap(b => b.strings||[]),
+          ...(rep.files||[]).flatMap(f => f.strings||[]),
         ]);
-        const aIds = new Set((ra.findings||[]).map(f => f.id));
-        const bIds = new Set((rb.findings||[]).map(f => f.id));
+        const stringsA = allStrings(ra);
+        const stringsB = allStrings(rb);
+        const addedStrings = [...stringsB].filter(s => !stringsA.has(s));
+        const removedStrings = [...stringsA].filter(s => !stringsB.has(s));
+
+        // Sensitive-string diff: same keyword list as the Sensitive tab,
+        // applied to each side's aggregate strings, then diffed -- e.g. a
+        // hardcoded credential that appears in the new firmware but wasn't
+        // in the old one.
+        const kws = this.sensitiveKeywords.map(k => k.toLowerCase()).filter(Boolean);
+        const matchSensitive = (strs) => {
+          const out = new Set();
+          for (const s of strs) {
+            const low = s.toLowerCase();
+            if (kws.some(k => low.includes(k))) out.add(s);
+          }
+          return out;
+        };
+        const sensA = matchSensitive(stringsA);
+        const sensB = matchSensitive(stringsB);
+
         this.compareResult = {
-          added: (rb.findings||[]).filter(f => !aIds.has(f.id)),
-          removed: (ra.findings||[]).filter(f => !bIds.has(f.id)),
-          common: (rb.findings||[]).filter(f => aIds.has(f.id)),
+          added: [...bByKey.entries()].filter(([k]) => !aByKey.has(k)).map(([,f]) => f),
+          removed: [...aByKey.entries()].filter(([k]) => !bByKey.has(k)).map(([,f]) => f),
+          common: [...bByKey.entries()].filter(([k]) => aByKey.has(k)).map(([,f]) => f),
+          binariesA: (ra.binaries||[]).length, binariesB: (rb.binaries||[]).length,
+          scriptsA: (ra.scripts||[]).length, scriptsB: (rb.scripts||[]).length,
+          filesA: filesA.length, filesB: filesB.length,
+          fileDiff,
+          stringsAdded: addedStrings.slice(0, STR_CAP), stringsAddedTotal: addedStrings.length,
+          stringsRemoved: removedStrings.slice(0, STR_CAP), stringsRemovedTotal: removedStrings.length,
+          sensitiveAdded: [...sensB].filter(s => !sensA.has(s)),
+          sensitiveRemoved: [...sensA].filter(s => !sensB.has(s)),
         };
       } catch (e) {
         alert("compare failed: " + e);
@@ -1632,22 +2258,31 @@ function app() {
       const deletedIds = new Set(ids.filter(id => results[id] === "deleted"));
       this.jobs = this.jobs.filter(j => !deletedIds.has(j.id));
       if (deletedIds.has(this.selectedId)) {
-        this.selectedId = null; this.report = null; this.closeSSE();
+        this.selectedId = null; this.summary = null; this.closeSSE();
       }
       this.deleteSelected = this.deleteSelected.filter(id => !deletedIds.has(id));
       if (deletedIds.size < ids.length) alert(this.t("delete_partial_fail"));
     },
 
+    // Binaries (ELF, strings from the RE loader) plus non-binary files
+    // (scripts/config files, from the full file listing) that carry their
+    // own extracted strings -- so Strings/Sensitive-strings hunting isn't
+    // limited to ELF binaries the way it used to be. Files without strings
+    // (empty, oversized, or symlinks) are filtered out here.
+    get stringsSources() {
+      const extra = this.filesStringsAll.filter(f => (f.strings || []).length);
+      return [...this.binaries, ...extra];
+    },
     onStringsTab() {
-      if (!this.binaries.some(b => b.path === this.stringsBinary)) {
-        this.stringsBinary = this.binaries[0] ? this.binaries[0].path : "";
+      if (!this.stringsSources.some(b => b.path === this.stringsBinary)) {
+        this.stringsBinary = this.stringsSources[0] ? this.stringsSources[0].path : "";
       }
     },
     get totalStrings() {
-      return this.binaries.reduce((n,b) => n + ((b.strings && b.strings.length) || 0), 0);
+      return this.stringsSources.reduce((n,b) => n + ((b.strings && b.strings.length) || 0), 0);
     },
     get currentBinaryStrings() {
-      const b = this.binaries.find(x => x.path === this.stringsBinary);
+      const b = this.stringsSources.find(x => x.path === this.stringsBinary);
       return (b && b.strings) || [];
     },
     get filteredStrings() {
@@ -1686,7 +2321,7 @@ function app() {
       const cap = 3000;
       const out = [];
       outer:
-      for (const b of this.binaries) {
+      for (const b of this.stringsSources) {
         if (this.sensitiveBinary && b.path !== this.sensitiveBinary) continue;
         for (const s of (b.strings || [])) {
           const low = s.toLowerCase();
@@ -1700,8 +2335,24 @@ function app() {
         }
       }
       this.sensitiveResults = out;
+      this.sensitivePage.offset = 0;
     },
     get sensitiveTruncated() { return this.sensitiveResults.length >= 3000; },
+    // Free-text filter on top of the keyword-dictionary match -- narrows the
+    // (potentially thousands-long) dictionary hit list down to a specific
+    // credential/host/path without editing the dictionary itself.
+    get filteredSensitiveResults() {
+      const q = (this.sensitiveQuery||"").trim().toLowerCase();
+      if (!q) return this.sensitiveResults;
+      return this.sensitiveResults.filter(r =>
+        r.text.toLowerCase().includes(q) || r.keyword.toLowerCase().includes(q) || r.binary.toLowerCase().includes(q));
+    },
+    filterSensitive() {
+      this.sensitivePage.offset = 0;
+    },
+    get sensitivePageItems() {
+      return this.filteredSensitiveResults.slice(this.sensitivePage.offset, this.sensitivePage.offset + this.sensitivePage.limit);
+    },
 
     // Jump to Findings from a dashboard number, pre-filtered so the drill-down
     // actually shows what was clicked (a fresh filter set, not whatever the
@@ -1715,6 +2366,7 @@ function app() {
       }
       this.f.vclass = opts.vclass || "";
       this.f.q = opts.q || "";
+      this.loadFindings();
     },
     // CVE findings aren't matched by vuln_class alone in a useful way for a
     // per-binary drill-down, so this stays a thin wrapper: known_cve class,
@@ -1739,6 +2391,14 @@ function app() {
       parts.pop();
       return parts.join("/") || "/";
     },
+    // Jobs are IDed "job-<seq>-<8 hex chars>"; the hex suffix is the part
+    // that actually disambiguates re-scans of the same/similarly-named
+    // target, so surface that instead of the sequence number.
+    jobIdShort(id) {
+      if (!id) return "";
+      const parts = id.split("-");
+      return "#" + (parts[parts.length - 1] || id);
+    },
     timeAgo(iso) {
       if (!iso) return "";
       const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -1759,11 +2419,13 @@ function app() {
     },
     cvesFor(path) {
       // CVE findings set component to "pkg@version" (SBOM identity), not the
-      // binary path — component never equals path for them. The binary link
-      // is only in evidence[].binary, so match there instead.
-      return [...new Set(this.findings
-        .filter(f => (f.evidence||[]).some(e => e.binary === path))
-        .flatMap(f => f.cve_ids||[]))].join(", ");
+      // binary path, so this can't match against `findings` directly (now
+      // paginated/filtered anyway, not guaranteed to hold every CVE finding
+      // at once). Components already carry the binary<->CVE link (same data
+      // that feeds the SBOM export), and are loaded in full, so use that.
+      return [...new Set(this.components
+        .filter(c => (c.binaries||[]).includes(path))
+        .flatMap(c => c.cve_ids||[]))].join(", ");
     },
     mitChips(m) {
       if (!m) return "—";
