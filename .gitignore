@@ -13,6 +13,12 @@ service/fwana-service
 # Service runtime data (triage state, uploads, users.json password hashes)
 service/data/
 service/.data/
+service/jobs/
+service/users.json
+service/reports.db
+service/reports.db-shm
+service/reports.db-wal
+service/*.log
 
 # Editor / OS
 .DS_Store
