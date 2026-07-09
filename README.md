@@ -150,15 +150,33 @@ password already changed via the web UI; add `-reset-pass` to force it). See
 **Web UI** (Alpine.js, embedded — no build step, works air-gapped): submit a
 server path *or* upload a file, then watch live SSE progress and explore:
 
-- **Dashboard** — finding/critical/high/binary/CVE cards + severity and
-  vuln-class distribution bars.
+- **Dashboard** — finding/critical/high/binary/CVE cards, severity and
+  vuln-class distribution bars, component/config-file/certificate counts
+  (click-through), a BusyBox overview card row, and a network-services/
+  open-ports card.
 - **Findings** — filter by severity toggles, vuln class, triage state, confidence
   threshold, and full-text search; sort by severity/confidence; expand for
   evidence, taint path, and Ghidra pseudocode; **triage inline** (confirm /
   false-positive / accept-risk / reset).
 - **Binaries** — per-binary arch, libc, mitigation chips (NX/Canary/RELRO/PIE/
-  FORTIFY, color-coded), function count, CVEs.
+  FORTIFY, color-coded), function count, CVEs (server-side paginated).
+- **Files** — full non-ELF file listing, filterable by kind (binary/script/
+  **config**/symlink/other); click a row to expand a syntax-highlighted
+  source preview inline.
+- **BusyBox** — compiled-in vs. reference-list "crippled" applets, extra
+  bin/sbin executables at any tree depth, and `/etc/init.d` script source.
+- **Network Services** — statically identified services (name/category/
+  banner-derived version/port/port-source/binary path), filterable by
+  category with keyword search.
+- **CVE Database** — browse the tool's actual CVE coverage (cve-bin-tool's
+  broad set + the curated offline fallback) independent of any scan; CVE
+  numbers throughout the UI link out to the matching NVD page.
+- **Sensitive-string dictionary** — standalone page to add/remove/reset the
+  keyword dictionary used for secret matching, no scan required.
+- **Compare** — diff findings/files/strings between two scans (added/
+  removed/unchanged).
 - **Export** — download JSON / Markdown / SBOM.
+- **User center** — change password, log out.
 
 REST endpoints (full table in [`service/README.md`](service/README.md)):
 
@@ -219,6 +237,11 @@ an unchanged target returns a cached result.
 | FR-REP-2 SBOM (CycloneDX 1.5) | ✅ (SPDX TODO) | `report/sbom.py` |
 | FR-INT-1 REST API + queue + web UI (dashboard, filtering, triage, SSE) | ✅ (Go service layer, Alpine.js) | `service/` |
 | FR-ING-4 Batch submission + dedup cache | ✅ (workers + path-mtime cache) | `service/job.go` |
+| Config-file classification & content hardening audit | ✅ (kind classification; content rule for telnet/anonymous-FTP/debug/SNMP-default-community/TLS-verify-off/WPS/UPnP) | `inventory/firmware_meta.py`, `vuln/config_audit.py` |
+| BusyBox applet audit | ✅ (compiled vs. reference-list diff, extra bin/sbin executables, init.d dump) | `inventory/busybox_audit.py` |
+| Certificate detection | ✅ (per-certificate RSA/non-RSA counts via `cryptography`, bundle/chain-aware) | `inventory/secrets.py` |
+| Network service identification | ✅ (static-only; banner-derived versions, UCI/inetd/init.d-flag/default port inference) | `inventory/service_id.py` |
+| Stripped-binary function-boundary recovery | ✅ (direct-call + prologue discovery, ARM/Thumb auto-detection) | `re/disasm.py` |
 
 Legend: ✅ done · ◑ partial · ⬜ not started
 
@@ -246,6 +269,53 @@ signature rules + entropy fallback, with redaction), shell/CGI command
 injection, PHP/Python/Lua injection (cmd/code/file-inclusion/deserialization),
 filesystem hardening, CycloneDX SBOM, prioritization ordering, and triage
 persistence.
+
+## Changelog
+
+Full technical detail (root causes, before/after numbers, test counts) is in
+[`PROGRESS.md`](PROGRESS.md)'s 变更记录 (Chinese). Feature-level summary:
+
+- **v3.5** — Static network service identification (WEB/SSH/FTP/Telnet/gSOAP/
+  DNS/SNMP/UPnP/WiFi-management daemons); versions read only from embedded
+  banner strings, never guessed; ports inferred from UCI config → inetd.conf
+  → init.d launch flags → known defaults. New "Network Services" tab +
+  dashboard service/port-count cards. Fixed duplicate service counting from
+  same-named config/init.d files vs. the real ELF binary.
+- **v3.4** — Real certificate detection (RSA vs. non-RSA per certificate,
+  bundle/chain-aware, via the `cryptography` library instead of a PEM-header
+  guess). Dashboard gains component/config-file/certificate counts and a
+  BusyBox overview card row.
+- **v3.3** — Fixed a v3.2 regression where config files silently lost their
+  click-to-preview affordance. Binaries/Scripts tabs moved from `?all=1`
+  bulk loads to real server-side pagination.
+- **v3.2** — New "config" file classification (extension/basename/UCI-path/
+  content-sniff) with a server-side Files-tab Kind filter. New
+  `config_audit.py` content-hardening rule (telnet, anonymous FTP, debug
+  mode, default SNMP community strings, disabled TLS verification, WPS,
+  UPnP left enabled). CVE numbers throughout the UI now link to NVD.
+  Zero-dependency syntax highlighting for file/BusyBox previews. Fixed
+  compare-scan silently reporting "0 added / all removed" instead of a
+  clear error on a failed report fetch.
+- **v3.0** — Stripped-ELF function-boundary recovery (direct-call + prologue
+  discovery, ARM/Thumb auto-detection). CVE sync reliability fixes
+  (upstream `cve-bin-tool` bug patches, NVD GitHub-mirror bootstrap
+  script). Findings/binaries/scripts/components migrated from one JSON
+  blob per job to SQLite with server-side pagination, fixing both a UI
+  crash on large scans and a hidden export-truncation bug. New BusyBox
+  applet audit tab (compiled vs. reference-list diff). Fixed a severe
+  compare-scan accuracy bug caused by absolute-path fingerprint matching.
+  Fixed the dedup cache silently serving pre-upgrade reports after an
+  analyzer version bump.
+- **v2.0** — Bilingual docs (this `README.zh-CN.md`), a Tech stack section,
+  and a References & acknowledgements section (crediting EMBA and
+  cve-bin-tool).
+- **v1.0** — Initial release: multi-arch disassembly & import-call
+  resolution (x86/x86_64, ARM, ARM Thumb-2, AArch64, MIPS LE/BE),
+  vulnerability discovery (dangerous functions, taint/reachability,
+  cross-binary taint, CVE correlation, CycloneDX SBOM, prioritization +
+  triage persistence), embedded-secrets and script-injection detection,
+  filesystem hardening, optional Ghidra decompilation, and the Go service
+  layer + Alpine.js web UI.
 
 ## Next iterations
 

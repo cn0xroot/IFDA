@@ -140,18 +140,26 @@ go build -o ifda-service .                 # Go 1.22+，仅首次需要
 **Web UI**（Alpine.js，内嵌——无需构建步骤，可离线使用）：提交一个服务器路径
 *或*上传一个文件，然后查看实时 SSE 进度并浏览：
 
-- **仪表盘** —— 发现数/严重/高危/二进制数/CVE 卡片 + 严重度与漏洞类别分布条形图。
+- **仪表盘** —— 发现数/严重/高危/二进制数/CVE 卡片、严重度与漏洞类别分布条形图、
+  组件数/配置文件数/证书数统计（可点击跳转）、BusyBox 情况概览卡片区、网络服务/
+  开放端口数卡片。
 - **发现列表** —— 按严重度开关、漏洞类别、分诊状态、置信度阈值筛选，支持全文搜索；
   按严重度/置信度排序；展开查看证据、污点路径、Ghidra 伪代码；**内联分诊**
   （确认/误报/接受风险/重置）。
 - **二进制列表** —— 每个二进制的架构、libc、缓解措施标签（NX/Canary/RELRO/PIE/
-  FORTIFY，按颜色区分）、函数数量、CVE。
-- **导出** —— 下载 JSON / Markdown / SBOM。
+  FORTIFY，按颜色区分）、函数数量、CVE（服务端真分页）。
+- **文件列表** —— 完整非 ELF 文件清单，按类型筛选（binary/script/**config**/
+  symlink/other）；点击某行在其下方展开语法高亮的源码预览。
+- **BusyBox** —— 已编译指令 vs. 参考列表得出的"被阉割"指令、任意层级 bin/sbin
+  目录下的额外可执行文件、`/etc/init.d` 脚本源码。
+- **服务识别** —— 纯静态分析识别出的网络服务（服务名/类别/版本号/端口/端口来源/
+  二进制路径），支持按类别筛选+关键字搜索。
 - **CVE 漏洞库** —— 独立于任何扫描，浏览工具实际能匹配到的 CVE 覆盖范围
-  （cve-bin-tool 的广域覆盖 + 内置精选回退库）。
+  （cve-bin-tool 的广域覆盖 + 内置精选回退库）；全站 CVE 编号均可点击跳转 NVD。
 - **敏感字符串字典** —— 独立管理页面，增删/重置用于匹配敏感字符串的关键词字典，
   不需要先跑一次扫描。
 - **对比扫描** —— 对比两次扫描的发现差异（新增/消失/共有）。
+- **导出** —— 下载 JSON / Markdown / SBOM。
 - **用户中心** —— 修改密码、退出登录。
 
 REST 接口（完整表格见 [`service/README.md`](service/README.md)）：
@@ -213,6 +221,11 @@ curl -F "file=@firmware.bin" localhost:8080/api/upload   # -> {"target": "...", 
 | FR-REP-2 SBOM（CycloneDX 1.5） | ✅（SPDX 待办） | `report/sbom.py` |
 | FR-INT-1 REST API + 队列 + Web UI（仪表盘、筛选、分诊、SSE） | ✅（Go 服务层，Alpine.js） | `service/` |
 | FR-ING-4 批量提交 + 去重缓存 | ✅（worker + 路径-mtime 缓存） | `service/job.go` |
+| 配置文件分类 + 内容安全加固审计 | ✅（类型分类；内容规则覆盖 telnet/匿名FTP/debug/SNMP默认团体名/TLS校验关闭/WPS/UPnP） | `inventory/firmware_meta.py`, `vuln/config_audit.py` |
+| BusyBox 指令审计 | ✅（已编译 vs. 参考列表对比、额外 bin/sbin 可执行文件、init.d 脚本导出） | `inventory/busybox_audit.py` |
+| 证书检测 | ✅（用 `cryptography` 逐张判断 RSA/非 RSA，支持证书链/bundle） | `inventory/secrets.py` |
+| 网络服务识别 | ✅（纯静态分析；版本号取自内嵌 banner，端口按 UCI/inetd/init.d 参数/默认值推断） | `inventory/service_id.py` |
+| 剥离二进制函数边界恢复 | ✅（直接调用发现 + prologue 识别，ARM/Thumb 自动判定） | `re/disasm.py` |
 
 图例：✅ 已完成 · ◑ 部分完成 · ⬜ 未开始
 
@@ -235,6 +248,42 @@ ARM Thumb-2、AArch64），覆盖：预置的命令注入验收用例（源→�
 包括不误报已修补版本；以及 `cve-bin-tool` 的结果解析）、嵌入式敏感信息（外部化
 签名规则 + 熵值兜底，含脱敏）、shell/CGI 命令注入、PHP/Python/Lua 注入（命令/代码/
 文件包含/反序列化）、文件系统加固、CycloneDX SBOM、优先级排序、分诊状态持久化。
+
+## 更新日志
+
+完整技术细节（根因分析、修复前后对比数据、测试数量）见
+[`PROGRESS.md`](PROGRESS.md) 的"变更记录"章节。以下是功能层面的摘要：
+
+- **v3.5** —— 新增纯静态网络服务识别（WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/
+  WiFi 管理类守护进程）；版本号一律从二进制内嵌的版本 banner 字符串提取，绝不
+  猜测；端口按 UCI 配置 → inetd.conf → init.d 启动参数 → 已知默认端口的优先级
+  推断。新增"服务识别"标签页 + 仪表盘服务数/端口数卡片。修复了同名配置/init.d
+  脚本文件与真实 ELF 二进制被重复计为多个服务的问题。
+- **v3.4** —— 新增真实证书检测（用 `cryptography` 库逐张判断 RSA/非 RSA，支持
+  证书链/bundle，而非从 PEM 头猜测）。仪表盘新增组件数/配置文件数/证书数统计
+  以及 BusyBox 情况概览卡片区。
+- **v3.3** —— 修复 v3.2 引入的回归：配置文件曾静默丢失点击预览能力。Binaries/
+  Scripts 标签页从 `?all=1` 一次性全量加载改为真正的服务端分页。
+- **v3.2** —— 新增 `config` 文件类型分类（扩展名/文件名/UCI 路径/内容嗅探），
+  Files 标签页新增服务端 Kind 筛选。新增 `config_audit.py` 内容安全加固规则
+  （检测 telnet、匿名 FTP、debug 模式、SNMP 默认团体名、TLS 校验关闭、WPS、
+  UPnP 等遗留开启项）。全站 CVE 编号改为可点击跳转 NVD。为文件/BusyBox 预览
+  加入零依赖语法高亮。修复对比扫描在报告拉取失败时静默呈现"0 新增/全部消失"
+  这类误导性结果的问题。
+- **v3.0** —— 剥离（stripped）ELF 的函数边界恢复（直接调用发现 + prologue
+  识别，ARM/Thumb 自动判定）。CVE 同步可靠性修复（上游 `cve-bin-tool` bug
+  补丁、NVD GitHub 镜像引导脚本）。findings/binaries/scripts/components 从
+  单个 JSON 大 blob 迁移到 SQLite 并改为服务端分页，修复了大型扫描下的 UI
+  卡死问题及一个隐藏的导出截断 bug。新增 BusyBox 指令审计标签页（已编译 vs.
+  参考列表对比）。修复了因绝对路径指纹匹配导致的严重对比扫描准确性 bug。
+  修复了分析器升级后去重缓存仍静默复用旧版本报告的问题。
+- **v2.0** —— 新增中文文档（`README.zh-CN.md`）、技术栈章节，以及参考与致谢
+  章节（感谢 EMBA 与 cve-bin-tool）。
+- **v1.0** —— 首个版本：多架构反汇编与导入调用解析（x86/x86_64、ARM、
+  ARM Thumb-2、AArch64、MIPS 大端/小端），漏洞发现（危险函数、污点/可达性
+  分析、跨二进制污点分析、CVE 关联、CycloneDX SBOM、优先级排序 + 分诊状态
+  持久化），嵌入式敏感信息与脚本注入检测，文件系统加固检查，可选 Ghidra
+  反编译增强，以及 Go 服务层 + Alpine.js Web UI。
 
 ## 后续迭代计划
 
