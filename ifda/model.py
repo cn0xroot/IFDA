@@ -214,6 +214,26 @@ class BusyboxAudit:
 
 
 @dataclass
+class ServiceInfo:
+    """FR-INV: one identified network service (web/SSH/FTP/Telnet/SOAP/DNS/
+    SNMP/UPnP/WiFi-management daemon) -- which software it is, its binary,
+    its version (from an embedded banner string, never guessed), and its
+    best-effort inferred listening port(s). Static analysis, not a live
+    scan -- "port" means "what it's configured for", not observed traffic.
+
+    See ifda/inventory/service_id.py for the signature database and the
+    port-inference chain (config/inetd/init.d flag/well-known default).
+    """
+    name: str                # canonical software name, e.g. "nginx", "Dropbear SSH"
+    category: str             # "web" | "ssh" | "ftp" | "telnet" | "soap" | "dns" | "snmp" | "upnp" | "wifi"
+    binary_path: str
+    version: str = ""         # "" if no version banner was found
+    ports: list[int] = field(default_factory=list)
+    port_source: str = ""     # "config" | "inetd" | "init.d flag" | "default" | ""
+    confidence: float = 0.5
+
+
+@dataclass
 class ComponentInfo:
     """A software component detected in the firmware (FR-INV-5), the same
     extractor that feeds the CycloneDX SBOM (report/sbom.py) — surfaced live
@@ -234,6 +254,7 @@ class AnalysisReport:
     findings: list[Finding] = field(default_factory=list)
     files: list[FileEntry] = field(default_factory=list)
     busybox_audit: BusyboxAudit = field(default_factory=BusyboxAudit)
+    services: list[ServiceInfo] = field(default_factory=list)
     tool_version: str = ""
     generated_at: str = ""
     # Firmware-level summary (FR-INV): kernel version banner (if found

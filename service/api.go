@@ -75,6 +75,7 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs/{id}/files", a.auth(a.getFiles))
 	mux.HandleFunc("GET /api/jobs/{id}/file-content", a.auth(a.getFileContent))
 	mux.HandleFunc("GET /api/jobs/{id}/busybox", a.auth(a.getBusyboxAudit))
+	mux.HandleFunc("GET /api/jobs/{id}/services", a.auth(a.getServices))
 	mux.HandleFunc("GET /api/jobs/{id}/events", a.auth(a.events))
 	mux.HandleFunc("POST /api/jobs/{id}/triage", a.auth(a.setTriage))
 	mux.HandleFunc("POST /api/jobs/{id}/pause", a.auth(a.pauseJob))
@@ -463,6 +464,28 @@ func (a *API) getBusyboxAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := a.reportDB.GetBusyboxAudit(job.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
+// getServices serves the identified network services (web/SSH/FTP/Telnet/
+// SOAP/DNS/SNMP/UPnP/WiFi daemons) whole (see ReportDB.GetServices) — small
+// enough that, like busybox_audit, it never needed pagination.
+func (a *API) getServices(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted {
+		writeErr(w, http.StatusConflict, "report not ready (job "+string(job.Status)+")")
+		return
+	}
+	data, err := a.reportDB.GetServices(job.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

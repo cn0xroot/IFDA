@@ -821,6 +821,156 @@ def test_pipeline_reports_cert_counts(tmp_path):
     assert report.rsa_cert_count == 1
 
 
+def _fake_elf(data: bytes = b"") -> bytes:
+    """A minimal is_elf()-satisfying blob (just the magic + padding) with
+    arbitrary content appended -- good enough for service_id's version-banner
+    regexes, which only need is_elf() to pass and their own strings present,
+    not a real, loadable ELF."""
+    return b"\x7fELF" + b"\x00" * 12 + data
+
+
+def test_service_id_detects_version_from_banner(tmp_path):
+    from ifda.inventory import detect_services
+
+    (tmp_path / "usr" / "sbin").mkdir(parents=True)
+    (tmp_path / "usr" / "sbin" / "dnsmasq").write_bytes(_fake_elf(b"dnsmasq-2.80\x00some other junk"))
+
+    services = detect_services(str(tmp_path))
+    by_name = {s.name: s for s in services}
+    assert by_name["dnsmasq"].version == "2.80"
+    assert by_name["dnsmasq"].category == "dns"
+    assert by_name["dnsmasq"].ports == [53]
+    assert by_name["dnsmasq"].port_source == "default"
+
+
+def test_service_id_does_not_double_count_script_or_config_with_same_name(tmp_path):
+    """Regression: /etc/init.d/dropbear (a shell script) and /etc/config/
+    dropbear (a UCI config file) share their basename with the real
+    usr/sbin/dropbear binary -- only the real ELF must be reported, not one
+    entry per same-named non-binary file too."""
+    from ifda.inventory import detect_services
+
+    (tmp_path / "usr" / "sbin").mkdir(parents=True)
+    (tmp_path / "usr" / "sbin" / "dropbear").write_bytes(_fake_elf(b"Dropbear sshd"))
+    (tmp_path / "etc" / "init.d").mkdir(parents=True)
+    (tmp_path / "etc" / "init.d" / "dropbear").write_text("#!/bin/sh\n/usr/sbin/dropbear -p 22\n")
+    (tmp_path / "etc" / "config").mkdir(parents=True)
+    (tmp_path / "etc" / "config" / "dropbear").write_text("config dropbear\n\toption Port '22'\n")
+
+    services = [s for s in detect_services(str(tmp_path)) if s.name == "Dropbear SSH"]
+    assert len(services) == 1
+    assert services[0].binary_path.endswith("usr/sbin/dropbear")
+
+
+def test_service_id_uci_port_beats_default(tmp_path):
+    from ifda.inventory import detect_services
+
+    (tmp_path / "usr" / "sbin").mkdir(parents=True)
+    (tmp_path / "usr" / "sbin" / "dropbear").write_bytes(_fake_elf())
+    (tmp_path / "etc" / "config").mkdir(parents=True)
+    (tmp_path / "etc" / "config" / "dropbear").write_text(
+        "config dropbear\n\toption PasswordAuth 'off'\n\toption Port '2222'\n")
+
+    services = detect_services(str(tmp_path))
+    dropbear = next(s for s in services if s.name == "Dropbear SSH")
+    assert dropbear.ports == [2222]
+    assert dropbear.port_source == "config"
+
+
+def test_service_id_inetd_style_line_resolves_port(tmp_path):
+    """The classic real-firmware pattern: /etc/inetd.conf doesn't exist as a
+    static file, but an init.d script hardcodes the exact 7-field inetd
+    format as a shell "echo ... >> /etc/inetd.conf" line, using literal
+    backslash-t (not a real tab byte) between fields since \\t is a shell
+    escape interpreted at *runtime*, not something present in the script's
+    own source bytes."""
+    from ifda.inventory import detect_services
+
+    (tmp_path / "usr" / "sbin").mkdir(parents=True)
+    (tmp_path / "usr" / "sbin" / "ftpd").write_bytes(_fake_elf())
+    (tmp_path / "etc").mkdir(exist_ok=True)
+    (tmp_path / "etc" / "services").write_text("ftp\t\t21/tcp\ntelnet\t\t23/tcp\n")
+    (tmp_path / "etc" / "init.d").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "etc" / "init.d" / "inetd").write_text(
+        'echo -e "ftp\\tstream\\ttcp\\tnowait\\troot\\t/usr/sbin/ftpd\\tftpd\\t/" >> /etc/inetd.conf\n'
+    )
+
+    services = detect_services(str(tmp_path))
+    ftpd = next(s for s in services if "ftpd" in s.name.lower())
+    assert ftpd.ports == [21]
+    assert ftpd.port_source == "inetd"
+
+
+def test_service_id_busybox_applet_symlink(tmp_path):
+    """A telnetd symlink pointing at busybox (the standard embedded-Linux
+    pattern) is a real "BusyBox telnetd" hit; a symlink to anything else
+    (a non-busybox provider, or one that simply isn't there) is not."""
+    from ifda.inventory import detect_services
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "busybox").write_bytes(_fake_elf())
+    os.symlink("busybox", tmp_path / "bin" / "telnetd")
+
+    services = detect_services(str(tmp_path))
+    telnetd = next((s for s in services if s.category == "telnet"), None)
+    assert telnetd is not None
+    assert telnetd.name == "BusyBox telnetd"
+
+
+def test_service_id_no_false_positive_without_binary(tmp_path):
+    """/etc/init.d/telnet referencing /usr/sbin/telnetd is not, by itself,
+    evidence telnetd is actually present -- a real firmware sample hit
+    exactly this (an init script for a service whose binary had been
+    stripped out of that particular partition build). No binary, no
+    symlink-to-busybox -- no finding."""
+    from ifda.inventory import detect_services
+
+    (tmp_path / "etc" / "init.d").mkdir(parents=True)
+    (tmp_path / "etc" / "init.d" / "telnet").write_text("PROG=/usr/sbin/telnetd\nstart() { $PROG; }\n")
+
+    services = detect_services(str(tmp_path))
+    assert not any(s.category == "telnet" for s in services)
+
+
+def test_service_id_gsoap_matched_by_content_not_name(tmp_path):
+    from ifda.inventory import detect_services
+
+    (tmp_path / "usr" / "bin").mkdir(parents=True)
+    (tmp_path / "usr" / "bin" / "vendor_mgmtd").write_bytes(_fake_elf(b"gSOAP/2.8.117 runtime"))
+
+    services = detect_services(str(tmp_path))
+    gsoap = next((s for s in services if s.name == "gSOAP"), None)
+    assert gsoap is not None
+    assert gsoap.version == "2.8.117"
+    assert gsoap.binary_path.endswith("vendor_mgmtd")
+
+
+def test_service_id_flag_port_from_init_script(tmp_path):
+    from ifda.inventory import detect_services
+
+    (tmp_path / "usr" / "sbin").mkdir(parents=True)
+    (tmp_path / "usr" / "sbin" / "dropbear").write_bytes(_fake_elf())
+    (tmp_path / "etc" / "init.d").mkdir(parents=True)
+    (tmp_path / "etc" / "init.d" / "dropbear").write_text("#!/bin/sh\nexec /usr/sbin/dropbear -p 2222\n")
+
+    services = detect_services(str(tmp_path))
+    dropbear = next(s for s in services if s.name == "Dropbear SSH")
+    assert dropbear.ports == [2222]
+    assert dropbear.port_source == "init.d flag"
+
+
+def test_pipeline_reports_services(tmp_path):
+    """Regression: services must actually reach AnalysisReport (wired into
+    the pipeline), not just be reachable as a standalone function."""
+    from ifda.pipeline import analyze
+
+    (tmp_path / "usr" / "sbin").mkdir(parents=True)
+    (tmp_path / "usr" / "sbin" / "dnsmasq").write_bytes(_fake_elf(b"dnsmasq-2.80"))
+
+    report = analyze(str(tmp_path))
+    assert any(s.name == "dnsmasq" for s in report.services)
+
+
 def test_cyclonedx_sbom():
     from ifda.report.sbom import render_cyclonedx
     import json

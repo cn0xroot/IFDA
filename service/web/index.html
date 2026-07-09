@@ -809,6 +809,8 @@
                   x-text="`${t('tab_sensitive')} (${sensitiveResults.length})`"></button>
           <button :class="{active:tab==='busybox'}" @click="tab='busybox'"
                   x-text="`${t('tab_busybox')} (${extraCommands.length})`"></button>
+          <button :class="{active:tab==='services'}" @click="tab='services'"
+                  x-text="`${t('tab_services')} (${services.length})`"></button>
           <span class="spacer"></span>
           <div class="exp">
             <a :href="exportURL('json')"><button class="ghost sm" x-text="t('export_json')"></button></a>
@@ -876,6 +878,23 @@
               <div class="card clickable" @click="tab='busybox'">
                 <div class="n" x-text="initScripts.length"></div><div class="l" x-text="t('dash_busybox_init')"></div>
               </div>
+            </div>
+          </div>
+
+          <div class="distro" x-show="services.length">
+            <h3 x-text="t('dash_services_h')"></h3>
+            <div class="cards">
+              <div class="card clickable" @click="tab='services'">
+                <div class="n" x-text="summary.service_count||services.length"></div><div class="l" x-text="t('dash_services_count')"></div>
+              </div>
+              <div class="card clickable" @click="tab='services'">
+                <div class="n" x-text="summary.open_port_count||servicePorts.length"></div><div class="l" x-text="t('dash_services_ports')"></div>
+              </div>
+            </div>
+            <div class="kwrow" style="margin-top:8px">
+              <template x-for="p in servicePorts" :key="p">
+                <span class="chip neutral" x-text="p"></span>
+              </template>
             </div>
           </div>
 
@@ -1358,6 +1377,48 @@
           </template>
           <p class="meta" x-show="busyboxAudit.truncated_init" x-text="t('busybox_initd_list_truncated')"></p>
         </div>
+
+        <!-- SERVICES -->
+        <div x-show="tab==='services'">
+          <h3 style="margin-top:0" x-text="t('services_h')"></h3>
+          <p class="meta" x-text="t('services_hint')"></p>
+          <div class="filters">
+            <select x-model="servicesCategoryFilter">
+              <option value="" x-text="t('services_filter_all_cat')"></option>
+              <template x-for="c in serviceCategories" :key="c">
+                <option :value="c" x-text="c"></option>
+              </template>
+            </select>
+            <input type="text" x-model="servicesQuery" :placeholder="t('services_search_placeholder')">
+            <span class="count" x-text="filteredServices.length"></span>
+          </div>
+          <template x-if="!services.length"><div class="empty" x-text="t('services_none')"></div></template>
+          <template x-if="services.length && !filteredServices.length"><div class="empty" x-text="t('no_files')"></div></template>
+          <div class="table-wrap" x-show="filteredServices.length">
+            <table class="bins">
+              <thead><tr>
+                <th x-text="t('services_th_name')"></th>
+                <th x-text="t('services_th_category')"></th>
+                <th x-text="t('services_th_version')"></th>
+                <th x-text="t('services_th_ports')"></th>
+                <th x-text="t('services_th_port_source')"></th>
+                <th x-text="t('th_path')"></th>
+              </tr></thead>
+              <template x-for="s in filteredServices" :key="s.binary_path+'@'+s.name">
+                <tbody>
+                  <tr>
+                    <td x-text="s.name"></td>
+                    <td><span class="chip neutral" x-text="s.category"></span></td>
+                    <td x-text="s.version || '—'"></td>
+                    <td x-text="(s.ports&&s.ports.length) ? s.ports.join(', ') : '—'"></td>
+                    <td x-text="s.port_source ? tServicePortSource(s.port_source) : '—'"></td>
+                    <td class="path" :title="s.binary_path" x-text="shortPath(s.binary_path)"></td>
+                  </tr>
+                </tbody>
+              </template>
+            </table>
+          </div>
+        </div>
       </div>
     </template>
   </div>
@@ -1413,6 +1474,9 @@ const I18N = {
   dash_busybox_missing: { en: "Missing (crippled)",                    zh: "被移除指令数" },
   dash_busybox_extra:   { en: "Extra commands",                        zh: "自有指令数" },
   dash_busybox_init:    { en: "init.d scripts",                        zh: "init 初始化脚本数" },
+  dash_services_h:      { en: "Network services",                     zh: "网络服务识别" },
+  dash_services_count:  { en: "Services identified",                  zh: "已识别服务数" },
+  dash_services_ports:  { en: "Open ports",                           zh: "开放端口数" },
   by_severity:          { en: "By severity",                          zh: "按严重度" },
   by_vuln_class:        { en: "By vulnerability class",                zh: "按漏洞类别" },
   filter_all_classes:   { en: "All classes",                          zh: "全部类别" },
@@ -1485,6 +1549,22 @@ const I18N = {
   busybox_initd_truncated: { en: "(content truncated)",               zh: "(内容已截断)" },
   busybox_initd_list_truncated: { en: "Script list truncated — too many init.d scripts to show all.",
                                    zh: "脚本列表已截断——init.d 脚本数量过多，未能全部显示。" },
+  tab_services:         { en: "Services",                             zh: "服务识别" },
+  services_h:           { en: "Network service identification",      zh: "网络服务识别" },
+  services_hint:        { en: "Static analysis, not a live scan — which known web/SSH/FTP/Telnet/SOAP/DNS/SNMP/UPnP/WiFi-management daemon is actually present, its version (from an embedded banner string, never guessed), and its best-effort inferred listening port(s) (config file / inetd.conf-style entry / init.d start flag / well-known default, in that order of preference).",
+                           zh: "静态分析结果，非实时端口扫描——识别固件中实际存在的WEB/SSH/FTP/Telnet/SOAP/DNS/SNMP/UPnP/WiFi管理等已知服务软件、其版本号(取自二进制内嵌的版本字符串，绝不猜测)，以及尽力推断出的监听端口(按优先级依次为:配置文件 / inetd.conf风格条目 / init.d启动参数 / 已知默认端口)。" },
+  services_filter_all_cat: { en: "All categories",                    zh: "全部类别" },
+  services_search_placeholder: { en: "filter by name, version or path…", zh: "按名称、版本或路径过滤…" },
+  services_none:        { en: "No known network services identified in this firmware.", zh: "该固件中未识别出已知的网络服务。" },
+  services_th_name:     { en: "Service",                              zh: "服务" },
+  services_th_category: { en: "Category",                             zh: "类别" },
+  services_th_version:  { en: "Version",                              zh: "版本" },
+  services_th_ports:    { en: "Port(s)",                              zh: "端口" },
+  services_th_port_source: { en: "Port source",                       zh: "端口来源" },
+  services_port_src_config: { en: "config file",                      zh: "配置文件" },
+  services_port_src_inetd: { en: "inetd.conf",                        zh: "inetd.conf" },
+  services_port_src_initd_flag: { en: "init.d flag",                  zh: "init.d 启动参数" },
+  services_port_src_default: { en: "well-known default",              zh: "已知默认端口" },
   th_findings:          { en: "Findings",                             zh: "发现数" },
   no_scripts:           { en: "No shell/PHP/Python/Lua scripts found in this target.",
                            zh: "该目标中没有找到 shell/PHP/Python/Lua 脚本。" },
@@ -1688,6 +1768,10 @@ function app() {
     // (see ifda/inventory/busybox_audit.py) -- small enough to load whole,
     // unlike findings/files.
     busyboxAudit: { has_busybox: false, compiled_in: [], missing: [], extra_commands: [], init_scripts: [] },
+    // Identified network services (web/SSH/FTP/Telnet/SOAP/DNS/SNMP/UPnP/
+    // WiFi daemons -- see ifda/inventory/service_id.py) -- small enough to
+    // load whole, unlike findings/files.
+    services: [], servicesCategoryFilter: "", servicesQuery: "",
     // Files tab content preview (config files, shell scripts, ... -- not
     // binaries/symlinks): fetched on demand and cached per path so toggling
     // the same row open/closed doesn't re-fetch.
@@ -1914,7 +1998,7 @@ function app() {
         const steps = [
           this.loadFindings(), this.loadBinaries(), this.loadScripts(),
           this.loadComponents(), this.loadFiles(), this.loadFilesStringsAll(),
-          this.loadBinariesStringsAll(), this.loadBusyboxAudit(),
+          this.loadBinariesStringsAll(), this.loadBusyboxAudit(), this.loadServices(),
         ];
         const total = steps.length + 1;
         let done = 1;
@@ -2048,6 +2132,11 @@ function app() {
       const r = await this.apiFetch(`/api/jobs/${this.selectedId}/busybox`);
       this.busyboxAudit = r.ok ? await r.json() : {};
       this.busyboxDirFilter = ""; this.busyboxQuery = "";
+    },
+    async loadServices() {
+      const r = await this.apiFetch(`/api/jobs/${this.selectedId}/services`);
+      this.services = r.ok ? await r.json() : [];
+      this.servicesCategoryFilter = ""; this.servicesQuery = "";
     },
     // Preview only makes sense for text-ish, non-ELF files -- every
     // non-binary, non-symlink kind (config/script/other), which is exactly
@@ -2228,6 +2317,27 @@ function app() {
         return true;
       });
     },
+    get serviceCategories() {
+      return [...new Set(this.services.map(s => s.category))].sort();
+    },
+    get filteredServices() {
+      const q = (this.servicesQuery||"").trim().toLowerCase();
+      return this.services.filter(s => {
+        if (this.servicesCategoryFilter && s.category !== this.servicesCategoryFilter) return false;
+        if (q && !s.name.toLowerCase().includes(q) && !(s.version||"").toLowerCase().includes(q)
+            && !s.binary_path.toLowerCase().includes(q)) return false;
+        return true;
+      });
+    },
+    // Distinct ports across every identified service, for the dashboard's
+    // open-port chip row -- not a live scan, just what services.ports
+    // (config/inetd/init.d flag/well-known default, see service_id.py)
+    // already inferred.
+    get servicePorts() {
+      const ports = new Set();
+      this.services.forEach(s => (s.ports||[]).forEach(p => ports.add(p)));
+      return [...ports].sort((a,b) => a-b);
+    },
     get vclasses() { return Object.keys((this.summary && this.summary.by_vuln_class) || {}).sort(); },
     get cveCount() { return (this.summary && this.summary.cve_count) || 0; },
     get classCounts() {
@@ -2244,6 +2354,10 @@ function app() {
       return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
     },
     tFileKind(kind) { return this.t("file_kind_" + (kind || "other")); },
+    tServicePortSource(src) {
+      const key = { config: "config", inetd: "inetd", "init.d flag": "initd_flag", default: "default" }[src];
+      return key ? this.t("services_port_src_" + key) : src;
+    },
     fileKindChipClass(kind) {
       return { binary: "ok", script: "warn", config: "warn", symlink: "neutral", other: "neutral" }[kind] || "neutral";
     },

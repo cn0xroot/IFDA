@@ -46,6 +46,7 @@ type rawReport struct {
 	Findings      []rawFinding      `json:"findings"`
 	Files         []json.RawMessage `json:"files"`
 	BusyboxAudit  json.RawMessage   `json:"busybox_audit"`
+	Services      json.RawMessage   `json:"services"`
 }
 
 type rawFinding struct {
@@ -91,7 +92,8 @@ func (r *ReportDB) migrate() error {
 			kernel_version TEXT, arch_summary TEXT, endian_summary TEXT,
 			file_count INTEGER, firmware_size INTEGER,
 			busybox_audit TEXT,
-			cert_count INTEGER, rsa_cert_count INTEGER
+			cert_count INTEGER, rsa_cert_count INTEGER,
+			services TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS findings (
 			job_id TEXT, id TEXT, title TEXT, vuln_class TEXT, severity TEXT,
@@ -143,6 +145,7 @@ func (r *ReportDB) migrate() error {
 		`ALTER TABLE files ADD COLUMN kind TEXT`,
 		`ALTER TABLE report_meta ADD COLUMN cert_count INTEGER`,
 		`ALTER TABLE report_meta ADD COLUMN rsa_cert_count INTEGER`,
+		`ALTER TABLE report_meta ADD COLUMN services TEXT`,
 	}
 	for _, s := range alters {
 		if _, err := r.db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -181,11 +184,12 @@ func (r *ReportDB) Ingest(jobID string, reportJSON []byte, triageOverlay map[str
 	}
 
 	_, err = tx.Exec(`INSERT INTO report_meta
-		(job_id, target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(job_id, target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, rep.Target, rep.ToolVersion, rep.GeneratedAt,
 		rep.KernelVersion, rep.ArchSummary, rep.EndianSummary, rep.FileCount, rep.FirmwareSize,
-		string(orEmptyObject(rep.BusyboxAudit)), rep.CertCount, rep.RsaCertCount)
+		string(orEmptyObject(rep.BusyboxAudit)), rep.CertCount, rep.RsaCertCount,
+		string(orEmptyArray(rep.Services)))
 	if err != nil {
 		return
 	}
@@ -350,7 +354,7 @@ func (r *ReportDB) CopyJob(fromID, toID string) error {
 		return err
 	}
 	stmts := []struct{ table, cols string }{
-		{"report_meta", "target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count"},
+		{"report_meta", "target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services"},
 		{"findings", "id, title, vuln_class, severity, confidence, component, rule, description, remediation, cve_ids, evidence, triage, pseudocode"},
 		{"binaries", "path, data"},
 		{"scripts", "path, data"},
@@ -388,15 +392,17 @@ type Summary struct {
 	BySeverity    map[string]int `json:"by_severity"`
 	ByVulnClass   map[string]int `json:"by_vuln_class"`
 	CVECount      int            `json:"cve_count"`
+	ServiceCount  int            `json:"service_count"`
+	OpenPortCount int            `json:"open_port_count"`
 }
 
 func (r *ReportDB) GetSummary(jobID string) (*Summary, error) {
 	s := &Summary{BySeverity: map[string]int{}, ByVulnClass: map[string]int{}}
 	row := r.db.QueryRow(`SELECT target, tool_version, generated_at, kernel_version, arch_summary,
-		endian_summary, file_count, firmware_size, cert_count, rsa_cert_count FROM report_meta WHERE job_id = ?`, jobID)
-	var kv, as, es sql.NullString
+		endian_summary, file_count, firmware_size, cert_count, rsa_cert_count, services FROM report_meta WHERE job_id = ?`, jobID)
+	var kv, as, es, svc sql.NullString
 	var fc, fs, cc, rcc sql.NullInt64
-	if err := row.Scan(&s.Target, &s.ToolVersion, &s.GeneratedAt, &kv, &as, &es, &fc, &fs, &cc, &rcc); err != nil {
+	if err := row.Scan(&s.Target, &s.ToolVersion, &s.GeneratedAt, &kv, &as, &es, &fc, &fs, &cc, &rcc, &svc); err != nil {
 		if err == sql.ErrNoRows {
 			return s, nil // report not ingested (yet) — empty summary, not an error
 		}
@@ -405,6 +411,21 @@ func (r *ReportDB) GetSummary(jobID string) (*Summary, error) {
 	s.KernelVersion, s.ArchSummary, s.EndianSummary = kv.String, as.String, es.String
 	s.FileCount, s.FirmwareSize = int(fc.Int64), fs.Int64
 	s.CertCount, s.RsaCertCount = int(cc.Int64), int(rcc.Int64)
+	if svc.Valid && svc.String != "" {
+		var services []struct {
+			Ports []int `json:"ports"`
+		}
+		if json.Unmarshal([]byte(svc.String), &services) == nil {
+			s.ServiceCount = len(services)
+			distinctPorts := map[int]struct{}{}
+			for _, svc := range services {
+				for _, p := range svc.Ports {
+					distinctPorts[p] = struct{}{}
+				}
+			}
+			s.OpenPortCount = len(distinctPorts)
+		}
+	}
 
 	rows, err := r.db.Query(`SELECT severity, COUNT(*) FROM findings WHERE job_id = ? GROUP BY severity`, jobID)
 	if err != nil {
@@ -736,6 +757,22 @@ func (r *ReportDB) GetBusyboxAudit(jobID string) (json.RawMessage, error) {
 	return json.RawMessage(data.String), nil
 }
 
+// GetServices returns the identified network services (web/SSH/FTP/Telnet/
+// SOAP/DNS/SNMP/UPnP/WiFi daemons -- see ifda/inventory/service_id.py) for
+// one job, whole -- small enough (typically single digits to a few dozen
+// entries) that, like busybox_audit, it never needed pagination.
+func (r *ReportDB) GetServices(jobID string) (json.RawMessage, error) {
+	var data sql.NullString
+	err := r.db.QueryRow(`SELECT services FROM report_meta WHERE job_id = ?`, jobID).Scan(&data)
+	if err == sql.ErrNoRows || !data.Valid || data.String == "" {
+		return json.RawMessage("[]"), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data.String), nil
+}
+
 // ExportFull reconstructs the full AnalysisReport JSON shape (all rows, no
 // pagination) for the download/export path (?format=json&download=1, plus
 // the md/sbom renders which need the whole thing) — used rarely, unlike the
@@ -748,13 +785,14 @@ func (r *ReportDB) ExportFull(jobID string) ([]byte, error) {
 		FirmwareSize                              sql.NullInt64
 		BusyboxAudit                              sql.NullString
 		CertCount, RsaCertCount                   sql.NullInt64
+		Services                                  sql.NullString
 	}
 	err := r.db.QueryRow(`SELECT target, tool_version, generated_at, kernel_version, arch_summary,
-		endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count
+		endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services
 		FROM report_meta WHERE job_id = ?`, jobID).Scan(
 		&meta.Target, &meta.ToolVersion, &meta.GeneratedAt, &meta.KernelVersion, &meta.ArchSummary,
 		&meta.EndianSummary, &meta.FileCount, &meta.FirmwareSize, &meta.BusyboxAudit,
-		&meta.CertCount, &meta.RsaCertCount)
+		&meta.CertCount, &meta.RsaCertCount, &meta.Services)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("no report for job %s", jobID)
 	}
@@ -821,6 +859,9 @@ func (r *ReportDB) ExportFull(jobID string) ([]byte, error) {
 	}
 	if meta.RsaCertCount.Valid {
 		doc["rsa_cert_count"] = meta.RsaCertCount.Int64
+	}
+	if meta.Services.Valid && meta.Services.String != "" {
+		doc["services"] = json.RawMessage(meta.Services.String)
 	}
 	return json.Marshal(doc)
 }

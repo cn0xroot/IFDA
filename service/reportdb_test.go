@@ -148,6 +148,77 @@ func TestBusyboxAuditRoundTrip(t *testing.T) {
 	}
 }
 
+// Network service identification (ifda/inventory/service_id.py's
+// detect_services()) round-trips through report_meta the same way
+// busybox_audit does, plus feeds the dashboard's service_count/
+// open_port_count aggregates.
+func TestServicesRoundTrip(t *testing.T) {
+	db, err := NewReportDB(filepath.Join(t.TempDir(), "reports.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reportJSON := []byte(`{
+		"target": "/fw",
+		"tool_version": "test",
+		"generated_at": "now",
+		"binaries": [], "scripts": [], "components": [], "findings": [],
+		"services": [
+			{"name": "nginx", "category": "web", "binary_path": "/fw/usr/sbin/nginx",
+			 "version": "1.18.0", "ports": [80], "port_source": "default", "confidence": 0.95},
+			{"name": "Dropbear SSH", "category": "ssh", "binary_path": "/fw/usr/sbin/dropbear",
+			 "version": "2019.78", "ports": [22], "port_source": "config", "confidence": 0.95}
+		]
+	}`)
+	if _, _, _, err := db.Ingest("job-1", reportJSON, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := db.GetServices("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var services []struct {
+		Name string `json:"name"`
+		Port []int  `json:"ports"`
+	}
+	if err := json.Unmarshal(got, &services); err != nil {
+		t.Fatalf("GetServices returned invalid JSON: %v (%s)", err, got)
+	}
+	if len(services) != 2 {
+		t.Fatalf("GetServices = %+v, want 2 services", services)
+	}
+
+	summary, err := db.GetSummary("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ServiceCount != 2 {
+		t.Errorf("ServiceCount = %d, want 2", summary.ServiceCount)
+	}
+	if summary.OpenPortCount != 2 {
+		t.Errorf("OpenPortCount = %d, want 2", summary.OpenPortCount)
+	}
+
+	full, err := db.ExportFull("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(full), `"Dropbear SSH"`) {
+		t.Error("ExportFull does not include services content")
+	}
+
+	// A job with no services at all must degrade to "[]", not an error or a
+	// null the frontend would choke on.
+	got2, err := db.GetServices("job-never-ingested")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got2) != "[]" {
+		t.Errorf("GetServices for unknown job = %q, want []", got2)
+	}
+}
+
 // Dashboard cert_count/rsa_cert_count (ifda/inventory/secrets.py's
 // count_certificates()) round-trip through report_meta the same way
 // kernel_version/file_count already do.

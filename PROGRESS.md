@@ -5,6 +5,42 @@
 
 ## 0. 变更记录
 
+- **2026-07-08 — v3.5:新增网络服务识别功能(WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi 等),独立标签页 + 仪表盘服务数/端口展示。**
+  自 v3.4 以来的改动。
+
+  - 新增 `ifda/inventory/service_id.py`:纯静态分析,不做任何实时端口扫描——"端口"指配置/脚本中
+    体现出该服务被配置监听的端口,而非实际观测到的流量。签名库覆盖 WEB(nginx/GoAhead/Boa/
+    lighttpd/thttpd/mini_httpd/Apache/Mongoose/uhttpd/BusyBox httpd)、SSH(OpenSSH/Dropbear)、
+    FTP(vsftpd/ProFTPD/Pure-FTPd/BusyBox ftpd/tftpd)、Telnet(BusyBox telnetd/utelnetd)、
+    gSOAP、DNS(dnsmasq)、SNMP(Net-SNMP)、UPnP(MiniUPnPd)、WiFi 管理(hostapd/wpa_supplicant)。
+    版本号一律从二进制内嵌的版本 banner 字符串中提取(如 `nginx/1.18.0`、
+    `SSH-2.0-dropbear_2019.78`),绝不猜测;命中但读不到版本号的严格签名不计入结果,避免误报。
+  - 端口推断优先级(由高到低):UCI 配置文件 `option Port` → inetd.conf 风格条目(含 init.d
+    脚本里 `echo -e "...\t..."` 硬编码生成的 inetd.conf,兼容脚本源码里字面 `\t` 转义序列而非
+    真实 tab 字节的情况)→ 服务自身 init.d 脚本里的 `-p`/`--port` 启动参数 → 已知默认端口。
+  - BusyBox 多用途二进制(`httpd`/`ftpd`/`tftpd`/`telnetd` 等符号链接指向 busybox)按对应
+    applet 识别。gSOAP 因无固定二进制名(代码生成工具库,链接进任意厂商命名的守护进程),改为
+    单独一趟"按二进制内容匹配版本 banner"的兜底扫描,而非按名称匹配。
+  - 修复:同名的配置文件/init.d 脚本与真实二进制(如 `/etc/config/dropbear`、
+    `/etc/init.d/dropbear` 与 `/usr/sbin/dropbear` 同名)此前会被重复计为多个服务——现在要求
+    候选路径必须是真实 ELF(`is_elf()`)才算一次命中,同名的配置/脚本文件仅用于端口推断。
+  - Go 侧沿用 `busybox_audit` 的落库方式:`report_meta` 新增 `services` 单列 JSON blob(非分页
+    表),`GetServices`/`ExportFull`/`GetSummary` 均已接入;新增 `GET /api/jobs/{id}/services`
+    接口。`Summary` 新增 `service_count`/`open_port_count` 两个仪表盘聚合字段。
+  - 前端新增独立"服务识别"标签页(服务名/类别/版本/端口/端口来源/二进制路径表格,支持按类别
+    筛选+关键字搜索),仪表盘新增"网络服务"卡片区(已识别服务数、开放端口数,可点击跳转)及
+    端口号 chip 列表。
+  - `ifda.__version__` 同步升到 2.4.0。
+
+  验证:Python 56 通过/2 跳过(`tests/test_core.py` 新增 9 个:banner 版本提取、同名文件去重、
+  UCI/inetd/init.d flag 端口推断优先级、BusyBox 符号链接识别、无二进制时不误报、gSOAP 按内容
+  匹配、pipeline 集成);Go 全量通过(`reportdb_test.go` 新增 services 落库/查询/Summary 聚合/
+  ExportFull 往返测试)。真实固件样本(bank_B 分区)端到端验证:修复前误报 11 个服务(重复计
+  dropbear/dnsmasq/miniupnpd),修复后正确识别 7 个唯一服务;inetd 端口推断此前完全不生效(脚本
+  里的 `\t` 是字面反斜杠+t,不是真实 tab 字节;正则又误加了行首锚点),修复后 BusyBox ftpd 端口
+  正确标注来源为 inetd 而非 default。telnetd 因该分区确实没有对应二进制/符号链接,正确地不予
+  识别(脚本提到不等于二进制存在),写成专门的回归测试而非当作缺陷处理。
+
 - **2026-07-08 — v3.4:仪表盘新增组件/配置文件/证书统计、BusyBox 情况概览、真实证书检测。**
   自 v3.3 以来的改动。
 

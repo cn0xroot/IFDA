@@ -28,7 +28,7 @@ from .vuln.cve import extract_sbom
 from .vuln.crossbinary import detect_cross_binary_taint
 from .inventory import (
     scan_secrets, detect_kernel_version, list_all_files, summarize_arch_endian, audit_busybox,
-    count_certificates,
+    count_certificates, detect_services,
 )
 from .scripts import scan_scripts, scan_lang_scripts, list_scripts, list_lang_scripts
 from .fs import scan_filesystem
@@ -258,6 +258,16 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
         busybox_paths = [b.path for b in report.binaries if os.path.basename(b.path) == "busybox"]
         file_kind_map = {f.path: f.kind for f in report.files}
         report.busybox_audit = audit_busybox(target, busybox_paths, file_kind_map=file_kind_map)
+    except Exception:
+        pass
+
+    # Network service identification (FR-INV): which known web/SSH/FTP/
+    # Telnet/SOAP/DNS/SNMP/UPnP/WiFi-management daemon is actually present,
+    # its version (from an embedded banner, not guessed), and its inferred
+    # listening port(s) -- see inventory/service_id.py for the full chain.
+    emit("service-id", 98, "network service identification")
+    try:
+        report.services = detect_services(target)
     except Exception:
         pass
 
