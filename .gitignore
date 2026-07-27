@@ -3,17 +3,28 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 build/
 dist/
+# Virtualenvs, whichever name is used
+venv/
+.venv/
+env/
 
-# Go service build artifact. `service/service` is what `go build` produces
-# when run from inside service/ without -o, which is easy to do by accident
-# (and is a ~17MB binary), so it's ignored alongside the named variants.
+# Go build artifacts. `service/service` is what `go build` produces when run
+# from inside service/ without -o, which is easy to do by accident (and is a
+# ~17MB binary), so it's ignored alongside the named variants.
 service/ifda-service
 service/fwana-service
 service/service
+*.test
+*.out
+coverage.txt
 
-# Service runtime data (triage state, uploads, users.json password hashes)
+# Service runtime data. Several of these hold secrets or scan results:
+# users.json has password hashes, ai.key decrypts every stored AI provider
+# API key, reports.db holds analysed firmware contents.
 service/data/
 service/.data/
 service/jobs/
@@ -24,11 +35,56 @@ service/reports.db
 service/reports.db-shm
 service/reports.db-wal
 service/*.log
+*.log
+
+# Credentials / local config that must never be committed
+.env
+.env.*
+*.pem
+*.key
+secrets.json
+
+# Analysis inputs and outputs. Firmware images and extracted trees are large
+# and usually not ours to redistribute; generated reports are reproducible.
+*.bin
+*.img
+*.squashfs
+*.ubi
+squashfs-root/
+_extract/
+extracted/
+report.json
+report.md
+sbom.json
+
+# Scratch / experiment space
+scratch/
+tmp/
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# Screenshots and screen recordings dropped into the repo root by accident.
+# Anchored to the root with a leading slash so documentation images under
+# docs/screenshots/ (referenced by both READMEs) are unaffected.
+/Screenshot*.png
+/Screenshot*.jpg
+/Screen?Recording*
+/*.mp4
 
 # Editor / OS
 .DS_Store
+Thumbs.db
+desktop.ini
 *.swp
+*.swo
+*~
+.vscode/
+.idea/
 
-# Harness / local tooling
+# Harness / local tooling. Agent scratch notes, plans and memory live here and
+# are personal to the machine, not part of the project.
 .claude/
+CLAUDE.local.md
 claude.sh

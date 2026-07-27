@@ -7,6 +7,24 @@
 
 > **仅限防御性/授权用途。** 只分析你拥有所有权或已获得授权评估的固件。详见需求文档 §1.3。
 
+## 界面预览
+
+Web UI 随 Go 服务层（`service/`）一起提供，全程中英双语——下面每个界面都有中英两个版本。
+
+| 仪表盘 | 发现列表 |
+|---|---|
+| [![仪表盘——按严重度与漏洞类别的分布](docs/screenshots/dashboard-zh.png)](docs/screenshots/dashboard-zh.png) | [![发现列表，可按严重度、类别与置信度筛选](docs/screenshots/findings-en.png)](docs/screenshots/findings-en.png) |
+| 单次扫描的总量统计、严重度直方图，以及按漏洞类别的分布。 | 可按严重度、类别、分诊状态、置信度或自由文本筛选；筛选结果可导出为 CSV/JSON。 |
+
+| 二进制 | 登录 |
+|---|---|
+| [![二进制列表，含架构、libc 与缓解措施](docs/screenshots/binaries-en.png)](docs/screenshots/binaries-en.png) | [![登录界面](docs/screenshots/login-zh.png)](docs/screenshots/login-zh.png) |
+| 每个 ELF 的架构、libc 以及缓解措施状态（NX / Canary / RELRO / PIE / FORTIFY），并附函数数、告警数、CVE 数与字符串数。 | 带图形验证码的会话认证；登录前即可切换主题与语言。 |
+
+英文界面见
+[`dashboard-en.png`](docs/screenshots/dashboard-en.png) 与
+[`login-en.png`](docs/screenshots/login-en.png)。
+
 ## 第一迭代范围
 
 按照既定计划，第一迭代交付**二进制逆向工程（FR-RE）**和**漏洞发现（FR-VUL）**。默认摄取与解包

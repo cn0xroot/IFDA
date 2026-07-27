@@ -9,6 +9,25 @@ binaries. This repository implements the **analysis core** described in
 > **Defensive / authorized use only.** Analyze firmware you own or are
 > authorized to assess. See requirements §1.3.
 
+## Screenshots
+
+The web UI ships with the Go service layer (`service/`) and is bilingual
+throughout — every screen below exists in both English and Chinese.
+
+| Dashboard | Findings |
+|---|---|
+| [![Dashboard — severity and vulnerability-class breakdown](docs/screenshots/dashboard-en.png)](docs/screenshots/dashboard-en.png) | [![Findings list with severity, class and confidence filters](docs/screenshots/findings-en.png)](docs/screenshots/findings-en.png) |
+| Per-scan totals, severity histogram and a breakdown by vulnerability class. | Filter by severity, class, triage state, confidence or free text; export the filtered set as CSV/JSON. |
+
+| Binaries | Sign-in |
+|---|---|
+| [![Binaries table showing arch, libc and exploit mitigations](docs/screenshots/binaries-en.png)](docs/screenshots/binaries-en.png) | [![Sign-in screen](docs/screenshots/login-en.png)](docs/screenshots/login-en.png) |
+| Every ELF with its architecture, libc and mitigation posture (NX / canary / RELRO / PIE / FORTIFY), plus function, warning, CVE and string counts. | Session auth with a captcha; theme and language are selectable before signing in. |
+
+The Chinese UI is shown in
+[`dashboard-zh.png`](docs/screenshots/dashboard-zh.png) and
+[`login-zh.png`](docs/screenshots/login-zh.png).
+
 ## Iteration 1 scope
 
 Per the agreed plan, the first iteration delivers **binary reverse engineering
