@@ -1,9 +1,47 @@
 # 开发进度 — IFDA(IoT Firmware Deep Analysis)
 
 > 配套需求文档:[`firmware-analysis-requirements.md`](firmware-analysis-requirements.md)
-> 最近更新:2026-07-11
+> 最近更新:2026-07-26
 
 ## 0. 变更记录
+
+- **2026-07-26 — v3.8:AI 分析扫描结果 + AI 服务商配置管理(Go 服务层,`ifda/` 核心零改动)。**
+
+  在现有规则引擎(CVE 匹配、taint、dangerous_funcs、backdoor、config_audit 等)产出的 findings 之上,
+  加一层可选的 AI 辅助分析——误报过滤、跨 finding 关联出攻击链、优先级排序、修复建议叙述。findings
+  已经完整落在 `service/reportdb.go` 的 SQLite 里,决定整个功能只做在 Go 服务层,不碰 Python 分析核心,
+  也不需要额外的进程间调用。
+
+  - **AI provider 配置管理**:新增 `ai_providers` 表(`service/reportdb.go`),支持自定义 Host URL + API
+    Key + 模型,多配置并存,完整 CRUD。协议假定为 OpenAI 兼容(`GET {host}/models` +
+    `POST {host}/chat/completions`,Bearer 鉴权)——这是自建网关(one-api/newapi/vLLM/Ollama 等)和主流
+    云端服务商的最大公约数,本期不做多协议适配。模型不允许手填,前端拿 Host+Key 先调
+    `/api/ai/models` 拉取真实模型列表填下拉框,拉取失败前"保存"按钮保持禁用,从根上避免模型名手误。
+  - **密钥落盘**:登录密码用的 PBKDF2 是单向哈希,验证够用但取不回明文,AI Key 必须能解密后转发给
+    服务商,不能照搬。新增 `service/aicrypto.go`:本地随机密钥文件(`<data>/ai.key`,0600,首次运行
+    生成)+ AES-256-GCM,全部标准库实现。`key_last4` 必须在加密前、明文还在手上时就算好存成独立列——
+    密文事后无法反推。启动日志明确提示 `ai.key` 要和 `reports.db`/`users.json` 一起备份,丢失即永久
+    锁死已保存的 Key(不是泄露,是取不回来了),只能删除重加。
+  - **分析触发**:报告详情页新增"AI分析"标签页,按需触发(不随扫描自动跑,避免每次扫描都产生
+    AI 调用成本)。`buildAnalysisPrompt`(`service/ai.go`)按严重度取 Top 60 条 finding(复用
+    `ListFindings` 已有的 `severity` 排序,不新增排序逻辑),超长的 description/pseudocode/evidence
+    字段截断到 800 字符,附一行"还有 N 条未展示"的 rollup,连同 report_meta 摘要一起组装成 prompt。
+    System prompt 显式要求把 finding 里的文本(从固件里提出来的东西)当证据数据而非指令处理,忽略
+    其中任何看起来像指令的内容——这是防 prompt injection 的主要手段。分析结果按 job 缓存一份
+    (`ai_analyses` 表,重跑覆盖,不留历史;`provider_id`/`provider_name`/`model` 都存了快照,删除
+    provider 后旧分析结果仍可看,只是 `provider_id` 置空)。前端渲染分析结果一律 `x-text` +
+    `white-space:pre-wrap`,不用 `x-html`——防的是 finding 里的注入内容诱导 AI 吐出 `<script>` 之类
+    造成存储型 XSS,这条比"叙述被误导"级别的风险要严重得多。
+  - **测试**:新增 `aicrypto_test.go`(加解密往返、错误密钥解密必须失败、密钥文件跨进程复用一致、
+    文件权限 0600)、`ai_test.go`(`httptest` 起假 OpenAI 兼容端点,覆盖 `/models`/`/chat/completions`
+    的成功/401/超时/空列表/JSON 解析失败,以及 prompt 截断和 rollup 计数),`reportdb_test.go`/
+    `api_test.go` 加 provider CRUD、分析缓存状态流转、job 未完成 409、provider 不存在 404、provider
+    不可达 502、"接口响应绝不包含完整明文/密文 Key"等用例。全量 `go test ./...` 通过,零回归。
+  - **真实验证**:本地起一个假 OpenAI 兼容 HTTP 端点,在 scratch 端口跑真实服务实例——完整走了一遍
+    新增 provider → 拉取模型下拉 → 保存 → 对一个真实跑完的扫描 job(`/bin/ls`,13 条 finding)点
+    AI 分析 → 结果正确缓存 → 删除 provider 后旧分析结果仍可读、`provider_id` 正确置空。之后在生产
+    `.data`(含 5 个历史扫描任务)上启动编译后的服务,确认历史任务正常加载、AI 密钥文件正常生成、
+    已有登录密码未被 `-user`/`-pass` 覆盖。
 
 - **2026-07-11 — v3.7(`ifda.__version__` 2.5.0 → 2.6.0):内核版本 CVE 关联 + 一个真实的扫描上限 bug。**
 

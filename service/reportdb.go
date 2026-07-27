@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -126,6 +128,32 @@ func (r *ReportDB) migrate() error {
 			PRIMARY KEY (job_id, path)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_job ON files(job_id)`,
+		// AI provider profiles (global, not per-job) and cached AI analysis
+		// results (per-job, latest run only -- see ai.go for how these are used).
+		`CREATE TABLE IF NOT EXISTS ai_providers (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			host TEXT NOT NULL,
+			api_key_enc TEXT NOT NULL,
+			key_last4 TEXT NOT NULL,
+			model TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'openai',
+			max_tokens INTEGER NOT NULL DEFAULT 8192,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_analyses (
+			job_id TEXT PRIMARY KEY,
+			provider_id TEXT,
+			provider_name TEXT,
+			model TEXT,
+			status TEXT NOT NULL,
+			content TEXT,
+			error TEXT,
+			prompt_meta TEXT,
+			started_at TEXT NOT NULL,
+			finished_at TEXT
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := r.db.Exec(s); err != nil {
@@ -146,6 +174,21 @@ func (r *ReportDB) migrate() error {
 		`ALTER TABLE report_meta ADD COLUMN cert_count INTEGER`,
 		`ALTER TABLE report_meta ADD COLUMN rsa_cert_count INTEGER`,
 		`ALTER TABLE report_meta ADD COLUMN services TEXT`,
+		// kind distinguishes the wire protocol to speak to a provider ("openai"
+		// -- Bearer auth, /chat/completions -- vs "anthropic" -- x-api-key
+		// auth, /messages, a separate top-level "system" field). Any row
+		// written before this column existed predates the distinction and was
+		// necessarily OpenAI-compatible, so 'openai' is the correct backfill,
+		// not just a placeholder.
+		`ALTER TABLE ai_providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'openai'`,
+		// max_tokens is the per-provider cap on generated output length --
+		// user-configurable (see ai.go's aiMaxOutputTokens for the shared
+		// default new rows get). A too-low cap was observed silently
+		// truncating analyses mid-sentence, or on models that spend part of
+		// their budget on extended thinking, exhausting it before any answer
+		// text was produced at all -- letting it be tuned per provider/model
+		// is the fix, not just raising one hardcoded number.
+		`ALTER TABLE ai_providers ADD COLUMN max_tokens INTEGER NOT NULL DEFAULT 8192`,
 	}
 	for _, s := range alters {
 		if _, err := r.db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -155,6 +198,34 @@ func (r *ReportDB) migrate() error {
 
 	if _, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_files_job_kind ON files(job_id, kind)`); err != nil {
 		return fmt.Errorf("migrate: create idx_files_job_kind: %w", err)
+	}
+
+	if err := r.reconcileInterruptedAnalyses(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// reconcileInterruptedAnalyses closes out AI analyses left in 'running' by
+// a previous process. A streaming run is owned by the single in-flight HTTP
+// request driving it (see runAIAnalysis in ai.go), so if the service exits
+// mid-stream -- crash, restart, deploy -- nothing is left to ever move that
+// row to done/error, and the UI would sit on a spinner for that job
+// forever. Nothing can be resumed (the provider connection is long gone),
+// so the honest resolution is to mark it interrupted and keep whatever
+// partial content had been persisted, which the user can then re-run.
+//
+// Safe to run unconditionally at startup: any row still 'running' at the
+// moment a process begins cannot belong to that process.
+func (r *ReportDB) reconcileInterruptedAnalyses() error {
+	res, err := r.db.Exec(`UPDATE ai_analyses SET status='error', finished_at=?,
+		error='Analysis was interrupted when the service restarted. Any text below is the partial result; re-run to get a complete analysis.'
+		WHERE status='running'`, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("migrate: reconcile interrupted analyses: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("marked %d AI analysis run(s) as interrupted (left 'running' by a previous process)", n)
 	}
 	return nil
 }
@@ -315,7 +386,7 @@ func jsonStringField(raw json.RawMessage, field string) string {
 }
 
 func deleteJobRows(tx *sql.Tx, jobID string) error {
-	for _, table := range []string{"report_meta", "findings", "binaries", "scripts", "components", "files"} {
+	for _, table := range []string{"report_meta", "findings", "binaries", "scripts", "components", "files", "ai_analyses"} {
 		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE job_id = ?`, jobID); err != nil {
 			return err
 		}
@@ -470,6 +541,7 @@ type FindingQuery struct {
 	Limit      int
 	NoLimit    bool     // export paths: return every matching row, not just one page
 	Severities []string // empty = all
+	IDs        []string // exact fingerprint ids; empty = no id filter (used by the AI get_finding_detail tool)
 	VulnClass  string
 	Triage     string
 	MinConf    float64
@@ -490,6 +562,14 @@ func (r *ReportDB) ListFindings(jobID string, q FindingQuery) ([]map[string]any,
 			args = append(args, sev)
 		}
 		where = append(where, "severity IN ("+strings.Join(ph, ",")+")")
+	}
+	if len(q.IDs) > 0 {
+		ph := make([]string, len(q.IDs))
+		for i, id := range q.IDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		where = append(where, "id IN ("+strings.Join(ph, ",")+")")
 	}
 	if q.VulnClass != "" {
 		where = append(where, "vuln_class = ?")
@@ -577,6 +657,244 @@ func (r *ReportDB) SetTriageEverywhere(findingID, state string) error {
 	defer r.mu.Unlock()
 	_, err := r.db.Exec(`UPDATE findings SET triage = ? WHERE id = ?`, state, findingID)
 	return err
+}
+
+// AIProvider is the full stored record, including the encrypted key -- only
+// ever used internally (e.g. by runAIAnalysis to decrypt and call out).
+// Never JSON-marshaled directly to an HTTP response; see AIProviderPublic.
+type AIProvider struct {
+	ID        string
+	Name      string
+	Host      string
+	APIKeyEnc string
+	KeyLast4  string
+	Model     string
+	Kind      string // "openai" (default, Bearer auth) | "anthropic" (x-api-key auth, /messages)
+	MaxTokens int    // per-provider cap on generated output length; see ai.go's aiMaxOutputTokens for the default
+	CreatedAt string
+	UpdatedAt string
+}
+
+// AIProviderPublic is what the REST API actually returns -- deliberately
+// has no field capable of holding the plaintext or encrypted key, so a
+// programming mistake can't accidentally leak either one to the browser.
+type AIProviderPublic struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	Model     string `json:"model"`
+	Kind      string `json:"kind"`
+	MaxTokens int    `json:"max_tokens"`
+	KeyLast4  string `json:"key_last4"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+func (p AIProvider) Public() AIProviderPublic {
+	return AIProviderPublic{ID: p.ID, Name: p.Name, Host: p.Host, Model: p.Model, Kind: p.Kind, MaxTokens: p.MaxTokens,
+		KeyLast4: p.KeyLast4, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+}
+
+// CreateProvider inserts a new AI provider profile. Callers must populate
+// APIKeyEnc/KeyLast4 (see aicrypto.go) before calling -- ReportDB never
+// touches plaintext key material itself.
+func (r *ReportDB) CreateProvider(p AIProvider) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec(`INSERT INTO ai_providers (id, name, host, api_key_enc, key_last4, model, kind, max_tokens, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.Host, p.APIKeyEnc, p.KeyLast4, p.Model, p.Kind, p.MaxTokens, p.CreatedAt, p.UpdatedAt)
+	return err
+}
+
+// ListProviders returns every saved provider ordered by name for stable
+// display in the settings panel.
+func (r *ReportDB) ListProviders() ([]AIProvider, error) {
+	rows, err := r.db.Query(`SELECT id, name, host, api_key_enc, key_last4, model, kind, max_tokens, created_at, updated_at
+		FROM ai_providers ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AIProvider
+	for rows.Next() {
+		var p AIProvider
+		if err := rows.Scan(&p.ID, &p.Name, &p.Host, &p.APIKeyEnc, &p.KeyLast4, &p.Model, &p.Kind, &p.MaxTokens, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// GetProvider fetches one provider including its encrypted key, for internal
+// use by runAIAnalysis/fetchAIModels (which decrypt it) -- never returned
+// directly to an HTTP handler's JSON response.
+func (r *ReportDB) GetProvider(id string) (*AIProvider, error) {
+	var p AIProvider
+	err := r.db.QueryRow(`SELECT id, name, host, api_key_enc, key_last4, model, kind, max_tokens, created_at, updated_at
+		FROM ai_providers WHERE id = ?`, id).
+		Scan(&p.ID, &p.Name, &p.Host, &p.APIKeyEnc, &p.KeyLast4, &p.Model, &p.Kind, &p.MaxTokens, &p.CreatedAt, &p.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// UpdateProvider updates name/host/model/kind/maxTokens unconditionally;
+// apiKeyEnc/keyLast4 nil means "keep the existing key" (the edit form
+// leaves the key field blank to mean "unchanged").
+func (r *ReportDB) UpdateProvider(id, name, host, model, kind string, maxTokens int, apiKeyEnc, keyLast4 *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if apiKeyEnc != nil {
+		_, err := r.db.Exec(`UPDATE ai_providers SET name=?, host=?, model=?, kind=?, max_tokens=?, api_key_enc=?, key_last4=?, updated_at=? WHERE id=?`,
+			name, host, model, kind, maxTokens, *apiKeyEnc, *keyLast4, now, id)
+		return err
+	}
+	_, err := r.db.Exec(`UPDATE ai_providers SET name=?, host=?, model=?, kind=?, max_tokens=?, updated_at=? WHERE id=?`,
+		name, host, model, kind, maxTokens, now, id)
+	return err
+}
+
+// ReplaceProviderKeyCiphertexts swaps every provider's stored ciphertext in
+// a single transaction, for AI key rotation (see rotateAIKey in
+// aicrypto.go). All-or-nothing by construction: a partial application would
+// leave some providers encrypted under the old key and some under the new,
+// with no way to tell which is which.
+func (r *ReportDB) ReplaceProviderKeyCiphertexts(encByID map[string]string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for id, enc := range encByID {
+		if _, err := tx.Exec(`UPDATE ai_providers SET api_key_enc = ? WHERE id = ?`, enc, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteProvider removes a provider profile. Any cached analysis that was
+// produced by it keeps its provider_name/model snapshot (still meaningful
+// to display) but has provider_id nulled out, since re-running that
+// analysis is no longer possible once its provider config is gone.
+func (r *ReportDB) DeleteProvider(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE ai_analyses SET provider_id = NULL WHERE provider_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM ai_providers WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AIAnalysis is one job's cached AI-analysis result (at most one row per
+// job -- a re-run overwrites it, see the plan doc for why that's fine here).
+type AIAnalysis struct {
+	JobID        string          `json:"job_id"`
+	ProviderID   *string         `json:"provider_id,omitempty"`
+	ProviderName string          `json:"provider_name"`
+	Model        string          `json:"model"`
+	Status       string          `json:"status"` // running | done | error
+	Content      string          `json:"content,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	PromptMeta   json.RawMessage `json:"prompt_meta,omitempty"`
+	StartedAt    string          `json:"started_at"`
+	FinishedAt   string          `json:"finished_at,omitempty"`
+}
+
+// UpsertAnalysisRunning marks the start of a fresh analysis run, clearing
+// any prior content/error so a page load mid-run shows "running" rather
+// than a stale previous result.
+func (r *ReportDB) UpsertAnalysisRunning(jobID, providerID, providerName, model string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := r.db.Exec(`INSERT INTO ai_analyses (job_id, provider_id, provider_name, model, status, content, error, prompt_meta, started_at, finished_at)
+		VALUES (?, ?, ?, ?, 'running', NULL, NULL, NULL, ?, NULL)
+		ON CONFLICT(job_id) DO UPDATE SET provider_id=excluded.provider_id, provider_name=excluded.provider_name,
+			model=excluded.model, status='running', content=NULL, error=NULL, prompt_meta=NULL,
+			started_at=excluded.started_at, finished_at=NULL`,
+		jobID, providerID, providerName, model, now)
+	return err
+}
+
+// CompleteAnalysis records a successful run's output.
+func (r *ReportDB) CompleteAnalysis(jobID, content string, promptMeta json.RawMessage) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := r.db.Exec(`UPDATE ai_analyses SET status='done', content=?, prompt_meta=?, finished_at=? WHERE job_id=?`,
+		content, string(promptMeta), now, jobID)
+	return err
+}
+
+// UpdateAnalysisContent persists the text streamed so far for a
+// still-running analysis, without touching status/finished_at -- called
+// periodically (throttled, see aiStreamPersistInterval in ai.go) while a
+// streaming run is in progress, so a concurrent GET (a page reload, or
+// another tab watching the same job) sees partial content instead of
+// nothing until the run completes.
+func (r *ReportDB) UpdateAnalysisContent(jobID, content string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec(`UPDATE ai_analyses SET content=? WHERE job_id=?`, content, jobID)
+	return err
+}
+
+// FailAnalysis records a failed run so the UI can show the error instead of
+// silently reverting to "no analysis yet". content is whatever text (if
+// any) had already streamed in before the failure -- preserved rather than
+// discarded, since a partial narrative is still more useful to an analyst
+// than nothing.
+func (r *ReportDB) FailAnalysis(jobID, content, errMsg string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := r.db.Exec(`UPDATE ai_analyses SET status='error', content=?, error=?, finished_at=? WHERE job_id=?`,
+		content, errMsg, now, jobID)
+	return err
+}
+
+// GetAnalysis returns (nil, nil) -- not an error -- when the job has never
+// been analyzed, mirroring GetSummary's "not ingested yet" convention.
+func (r *ReportDB) GetAnalysis(jobID string) (*AIAnalysis, error) {
+	var a AIAnalysis
+	var providerID, content, errMsg, promptMeta, finishedAt sql.NullString
+	err := r.db.QueryRow(`SELECT job_id, provider_id, provider_name, model, status, content, error, prompt_meta, started_at, finished_at
+		FROM ai_analyses WHERE job_id = ?`, jobID).
+		Scan(&a.JobID, &providerID, &a.ProviderName, &a.Model, &a.Status, &content, &errMsg, &promptMeta, &a.StartedAt, &finishedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if providerID.Valid {
+		a.ProviderID = &providerID.String
+	}
+	a.Content = content.String
+	a.Error = errMsg.String
+	a.FinishedAt = finishedAt.String
+	if promptMeta.Valid && promptMeta.String != "" {
+		a.PromptMeta = json.RawMessage(promptMeta.String)
+	}
+	return &a, nil
 }
 
 func paginateRaw(db *sql.DB, table, jobID string, offset, limit int) ([]json.RawMessage, int, error) {

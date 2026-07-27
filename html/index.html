@@ -1,0 +1,996 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IFDA — IoT Firmware Deep Analysis</title>
+<meta name="description" content="IFDA: automated reverse engineering and vulnerability discovery for IoT firmware — multi-arch disassembly, CVE correlation, taint analysis, and AI-assisted triage, self-hosted.">
+<meta name="theme-color" content="#07080f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+<style>
+  :root, [data-theme="midnight"] {
+    --bg:#07080f; --surface:#0d1117; --panel:#111827; --panel2:#161f2e;
+    --line:#1e2a3a; --line2:#243044; --fg:#f1f5f9; --muted:#94a3b8; --soft:#cbd5e1;
+    --accent:#6366f1; --accent-h:#818cf8; --accent2:#a78bfa; --code:#0b0f15;
+    --warn:#f59e0b; --warn-bg:rgba(245,158,11,.12); --ok:#22c55e; --crit:#f43f5e;
+  }
+  [data-theme="light"] {
+    --bg:#f8fafc; --surface:#ffffff; --panel:#ffffff; --panel2:#f1f5f9;
+    --line:#e2e8f0; --line2:#cbd5e1; --fg:#0f172a; --muted:#475569; --soft:#334155;
+    --accent:#6366f1; --accent-h:#4f46e5; --accent2:#8b5cf6; --code:#f1f5f9;
+    --warn:#b45309; --warn-bg:rgba(180,83,9,.10); --ok:#16a34a; --crit:#e11d48;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html { scroll-behavior:smooth; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+         -webkit-font-smoothing:antialiased; overflow-x:hidden; transition:background .2s,color .2s; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  a { color:var(--accent); text-decoration:none; }
+  img,svg { display:block; max-width:100%; }
+  .wrap { max-width:1120px; margin:0 auto; padding:0 24px; }
+  .grad-text { background:linear-gradient(90deg,var(--accent),var(--accent2));
+               -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  section { padding:88px 0; border-bottom:1px solid var(--line); }
+  section:last-of-type { border-bottom:0; }
+  h2.sec-title { font-size:30px; margin:0 0 10px; letter-spacing:-.01em; }
+  p.sec-sub { color:var(--muted); font-size:15.5px; max-width:640px; margin:0 0 44px; }
+  .eyebrow { display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:700;
+             letter-spacing:.06em; text-transform:uppercase; color:var(--accent-h);
+             background:color-mix(in srgb, var(--accent) 14%, transparent);
+             border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+             padding:5px 12px; border-radius:999px; margin-bottom:18px; }
+
+  /* ---------- nav ---------- */
+  nav { position:sticky; top:0; z-index:50; backdrop-filter:blur(14px);
+        background:color-mix(in srgb, var(--bg) 78%, transparent); border-bottom:1px solid var(--line); }
+  .navrow { display:flex; align-items:center; gap:10px; height:64px; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:800; font-size:17px; margin-right:8px; }
+  .brandmark { width:30px; height:30px; border-radius:9px; flex:none;
+               background:linear-gradient(135deg,var(--accent),var(--accent2));
+               display:flex; align-items:center; justify-content:center;
+               box-shadow:0 8px 20px -8px color-mix(in srgb, var(--accent) 65%, transparent); }
+  .brandmark svg { width:17px; height:17px; stroke:#fff; }
+  .navlinks { display:flex; gap:2px; flex:1; }
+  .navlinks a { color:var(--muted); font-size:13.5px; font-weight:600; padding:9px 12px; border-radius:7px; white-space:nowrap; }
+  .navlinks a:hover { color:var(--fg); background:var(--panel2); }
+  .navctl { display:flex; align-items:center; gap:8px; }
+  .iconbtn { width:34px; height:34px; border-radius:8px; border:1px solid var(--line); background:var(--panel2);
+             color:var(--fg); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .iconbtn:hover { border-color:var(--accent); color:var(--accent-h); }
+  .iconbtn svg { width:16px; height:16px; }
+  .btn { display:inline-flex; align-items:center; gap:7px; font-weight:700; font-size:13.5px;
+         padding:9px 16px; border-radius:8px; border:1px solid transparent; cursor:pointer; white-space:nowrap; }
+  .btn svg { width:15px; height:15px; }
+  .btn.primary { background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#fff;
+                 box-shadow:0 10px 24px -10px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .btn.primary:hover { filter:brightness(1.08); }
+  .btn.ghost { background:var(--panel2); border-color:var(--line); color:var(--fg); }
+  .btn.ghost:hover { border-color:var(--accent); color:var(--accent-h); }
+  .navburger { display:none; }
+  .mobileMenu { display:none; flex-direction:column; gap:2px; padding:8px 24px 16px;
+                border-top:1px solid var(--line); background:var(--bg); }
+  .mobileMenu.open { display:flex; }
+  .mobileMenu a { color:var(--soft); font-size:15px; font-weight:600; padding:13px 8px; border-radius:8px; }
+  .mobileMenu a:hover, .mobileMenu a:active { background:var(--panel2); color:var(--fg); }
+
+  /* ---------- hero ---------- */
+  .hero { position:relative; padding:96px 0 80px; overflow:hidden; border-bottom:1px solid var(--line); }
+  .hero::before { content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+        background:
+          radial-gradient(ellipse 900px 520px at 15% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%),
+          radial-gradient(ellipse 760px 520px at 100% 10%, color-mix(in srgb, var(--accent2) 18%, transparent), transparent 60%); }
+  .hero .wrap { position:relative; z-index:1; }
+  .herogrid { display:grid; grid-template-columns:1.05fr .95fr; gap:56px; align-items:center; }
+  h1.hero-title { font-size:44px; line-height:1.16; letter-spacing:-.02em; margin:0 0 20px; }
+  p.hero-sub { color:var(--muted); font-size:17px; max-width:560px; margin:0 0 30px; }
+  .cta-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:22px; }
+  .warnchip { display:inline-flex; gap:8px; align-items:flex-start; font-size:12.5px; color:var(--warn);
+              background:var(--warn-bg); border:1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+              padding:9px 12px; border-radius:9px; max-width:520px; }
+  .warnchip svg { width:15px; height:15px; flex:none; margin-top:1px; }
+
+  .term { background:var(--code); border:1px solid var(--line); border-radius:12px; overflow:hidden;
+          box-shadow:0 30px 70px -30px rgba(0,0,0,.5); }
+  .term-bar { display:flex; align-items:center; gap:7px; padding:10px 13px; border-bottom:1px solid var(--line); }
+  .term-dot { width:10px; height:10px; border-radius:50%; }
+  .term pre { margin:0; padding:16px 18px; font-size:12.6px; line-height:1.7; overflow-x:auto; color:var(--soft); }
+  .term .c1 { color:#64d2ff; } .term .c2 { color:#7ee787; } .term .c3 { color:#f1c40f; } .term .c4 { color:var(--muted); }
+
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line);
+           border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-top:48px; }
+  .stat { background:var(--surface); padding:20px 14px; text-align:center; }
+  .stat .n { font-size:24px; font-weight:800; }
+  .stat .l { font-size:12px; color:var(--muted); margin-top:3px; }
+
+  /* ---------- grids / cards ---------- */
+  .grid { display:grid; gap:16px; }
+  .grid.c4 { grid-template-columns:repeat(4,1fr); }
+  .grid.c3 { grid-template-columns:repeat(3,1fr); }
+  .grid.c2 { grid-template-columns:repeat(2,1fr); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  .card:hover { border-color:var(--line2); }
+  .badge { width:38px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+           font-weight:800; font-size:12px; letter-spacing:.02em; color:#fff; margin-bottom:14px; }
+  .card h3 { font-size:15px; margin:0 0 6px; }
+  .card p { font-size:13.3px; color:var(--muted); margin:0; }
+  .card .fr { display:inline-block; margin-top:10px; font-size:10.5px; color:var(--muted);
+              background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; }
+
+  .g-indigo { background:linear-gradient(135deg,#6366f1,#818cf8); }
+  .g-violet { background:linear-gradient(135deg,#a855f7,#c084fc); }
+  .g-cyan   { background:linear-gradient(135deg,#0ea5e9,#22d3ee); }
+  .g-green  { background:linear-gradient(135deg,#22c55e,#4ade80); }
+  .g-amber  { background:linear-gradient(135deg,#f59e0b,#fbbf24); }
+  .g-rose   { background:linear-gradient(135deg,#f43f5e,#fb7185); }
+
+  /* ---------- category tabs ---------- */
+  .cat-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:28px; border-bottom:1px solid var(--line); padding-bottom:2px; }
+  .cat-tab { font-size:13px; font-weight:700; color:var(--muted); background:none; border:0;
+             padding:9px 14px; border-radius:8px 8px 0 0; cursor:pointer; border-bottom:2px solid transparent; }
+  .cat-tab.active { color:var(--fg); border-bottom-color:var(--accent); }
+  .cat-panel { display:none; }
+  .cat-panel.active { display:block; }
+
+  /* ---------- AI spotlight ---------- */
+  .spotlight { display:grid; grid-template-columns:1fr 1fr; gap:48px; align-items:center; }
+  .spotlight ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:16px; }
+  .spotlight li { display:flex; gap:12px; }
+  .spotlight li .dot { width:22px; height:22px; border-radius:6px; flex:none; margin-top:2px;
+        background:linear-gradient(135deg,var(--accent),var(--accent2));
+        display:flex; align-items:center; justify-content:center; }
+  .spotlight li .dot svg { width:12px; height:12px; stroke:#fff; }
+  .spotlight li strong { display:block; font-size:14px; margin-bottom:2px; }
+  .spotlight li span { font-size:13.3px; color:var(--muted); }
+  .chatmock { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+  .chatmock .row { display:flex; gap:10px; margin-bottom:14px; }
+  .chatmock .avatar { width:26px; height:26px; border-radius:7px; flex:none; }
+  .chatmock .bubble { background:var(--panel2); border:1px solid var(--line); border-radius:10px;
+                       padding:10px 12px; font-size:12.6px; color:var(--soft); }
+  .chatmock .bubble.user { background:color-mix(in srgb, var(--accent) 12%, var(--panel2)); }
+
+  /* ---------- architecture ---------- */
+  .pipeline { display:flex; align-items:stretch; gap:0; overflow-x:auto; padding-bottom:6px; }
+  .pl-box { flex:1; min-width:150px; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+            padding:16px 14px; text-align:center; }
+  .pl-box .n { font-size:11px; color:var(--muted); margin-bottom:6px; }
+  .pl-box strong { display:block; font-size:13.5px; margin-bottom:4px; }
+  .pl-box span { font-size:11.8px; color:var(--muted); }
+  .pl-arrow { display:flex; align-items:center; justify-content:center; width:34px; flex:none; color:var(--muted); }
+  .pl-arrow svg { width:18px; height:18px; }
+  .archrow { display:flex; gap:16px; margin-top:22px; }
+  .archcol { flex:1; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .archcol h4 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .archcol ul { margin:0; padding-left:18px; font-size:13px; color:var(--soft); }
+  .archcol li { margin-bottom:6px; }
+
+  /* ---------- tech stack ---------- */
+  .chiprow { display:flex; flex-wrap:wrap; gap:9px; }
+  .chip { font-size:12.5px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--soft);
+          background:var(--panel2); border:1px solid var(--line); padding:6px 11px; border-radius:7px; }
+  .chip.opt { opacity:.7; border-style:dashed; }
+  .stacklane { margin-bottom:22px; }
+  .stacklane h4 { font-size:12.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 10px; }
+
+  /* ---------- UI preview mock ---------- */
+  .browser { border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--surface);
+             box-shadow:0 40px 80px -40px rgba(0,0,0,.55); }
+  .browser-bar { display:flex; align-items:center; gap:8px; padding:10px 14px; background:var(--panel2); border-bottom:1px solid var(--line); }
+  .browser-url { flex:1; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 10px;
+                 font-size:11.5px; color:var(--muted); font-family:ui-monospace,monospace; }
+  .mockbody { padding:20px; }
+  .mocktabs { display:flex; gap:4px; margin-bottom:16px; overflow-x:auto; }
+  .mocktabs span { font-size:11px; font-weight:700; color:var(--muted); padding:6px 11px; border-radius:6px 6px 0 0; white-space:nowrap; }
+  .mocktabs span.on { color:var(--fg); border-bottom:2px solid var(--accent); }
+  .mockcards { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px; }
+  .mockcard { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:11px; }
+  .mockcard .n { font-size:19px; font-weight:800; } .mockcard .l { font-size:10px; color:var(--muted); }
+  .mockfinding { display:flex; align-items:center; gap:10px; background:var(--panel); border:1px solid var(--line);
+                 border-radius:8px; padding:10px 12px; margin-bottom:8px; font-size:12px; }
+  .sevdot { width:8px; height:8px; border-radius:50%; flex:none; }
+  .mockfinding .ft { flex:1; color:var(--soft); }
+  .mockfinding .fc { font-family:monospace; font-size:10.5px; color:var(--muted); }
+  .caption { text-align:center; font-size:12px; color:var(--muted); margin-top:14px; }
+
+  /* ---------- install ---------- */
+  .codeblock { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px;
+               padding:16px 18px; margin-bottom:14px; }
+  .codeblock pre { margin:0; font-size:12.6px; line-height:1.7; overflow-x:auto; color:var(--soft);
+                    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  .codeblock .comment { color:var(--muted); }
+  .copybtn { position:absolute; top:10px; right:10px; font-size:11px; padding:5px 9px; }
+
+  /* ---------- changelog ---------- */
+  .tl { border-left:2px solid var(--line); padding-left:22px; display:flex; flex-direction:column; gap:26px; }
+  .tl-item { position:relative; }
+  .tl-item::before { content:""; position:absolute; left:-27.5px; top:3px; width:11px; height:11px; border-radius:50%;
+        background:var(--accent); border:2px solid var(--bg); }
+  .tl-item .v { font-weight:800; font-size:14.5px; } .tl-item .d { font-size:11.5px; color:var(--muted); margin-left:8px; }
+  .tl-item p { margin:6px 0 0; font-size:13.3px; color:var(--muted); max-width:640px; }
+
+  /* ---------- callouts ---------- */
+  .callout { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px 24px; }
+  .callout.warn { border-color:color-mix(in srgb, var(--warn) 35%, var(--line)); background:var(--warn-bg); }
+  .callout h4 { margin:0 0 8px; font-size:14.5px; }
+  .callout p { margin:0; font-size:13.3px; color:var(--soft); }
+
+  footer { padding:48px 0 36px; }
+  .footgrid { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; flex-wrap:wrap; }
+  .footlinks { display:flex; gap:28px; flex-wrap:wrap; }
+  .footlinks div strong { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:10px; }
+  .footlinks a { display:block; font-size:13px; color:var(--soft); margin-bottom:8px; }
+  .footlinks a:hover { color:var(--accent-h); }
+  .footbottom { margin-top:36px; padding-top:20px; border-top:1px solid var(--line);
+                display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; font-size:12px; color:var(--muted); }
+
+  @media (max-width:920px) {
+    .herogrid, .spotlight, .grid.c4, .grid.c3, .grid.c2, .archrow, .mockcards { grid-template-columns:1fr !important; }
+    .archrow { flex-direction:column; }
+    .stats { grid-template-columns:repeat(2,1fr); }
+    h1.hero-title { font-size:32px; }
+    .navlinks { display:none; }
+    .navburger { display:flex; }
+    section { padding:60px 0; }
+  }
+
+  /* Phone-specific tightening -- 920px above already collapses every
+     multi-column layout to one column; below this a phone also needs
+     tighter spacing/type-scale and full-width, easier-to-tap controls. */
+  @media (max-width:560px) {
+    .wrap { padding:0 16px; }
+    section { padding:44px 0; }
+    h1.hero-title { font-size:27px; }
+    h2.sec-title { font-size:24px; }
+    p.hero-sub { font-size:15px; }
+    .navrow { height:58px; gap:6px; }
+    .brand { font-size:15px; gap:8px; margin-right:2px; }
+    .brandmark { width:26px; height:26px; }
+    .cta-row { flex-direction:column; align-items:stretch; }
+    .cta-row .btn { justify-content:center; }
+    .iconbtn { width:38px; height:38px; }
+    .btn { padding:11px 16px; }
+    .navctl .btn.ghost { padding:8px 10px; }
+    .navGithubText { display:none; }
+    .term pre, .codeblock pre { font-size:11.8px; }
+    .pipeline { margin:0 -16px; padding-left:16px; padding-right:16px; width:calc(100% + 32px); }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap navrow">
+    <div class="brand">
+      <div class="brandmark">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2 4 5.5v6c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-6L12 2Z"/>
+          <path d="M9.5 12.2 11.3 14l3.4-4"/>
+        </svg>
+      </div>
+      IFDA
+    </div>
+    <div class="navlinks">
+      <a href="#features" data-i18n="nav_features">核心能力</a>
+      <a href="#ai" data-i18n="nav_ai">AI 分析</a>
+      <a href="#architecture" data-i18n="nav_arch">架构</a>
+      <a href="#stack" data-i18n="nav_stack">技术栈</a>
+      <a href="#install" data-i18n="nav_install">快速开始</a>
+      <a href="#changelog" data-i18n="nav_changelog">更新日志</a>
+    </div>
+    <div class="navctl">
+      <button class="iconbtn" id="langBtn" title="Language / 语言">
+        <span class="mono" style="font-size:11px;font-weight:800" id="langLabel">EN</span>
+      </button>
+      <button class="iconbtn" id="themeBtn" title="Theme / 主题">
+        <svg id="themeIconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8Z"/></svg>
+        <svg id="themeIconSun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+      <a class="btn ghost" href="https://github.com/cn0xroot/IFDA" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M7 7h10v10"/></svg>
+        <span class="navGithubText">GitHub</span>
+      </a>
+      <button class="iconbtn navburger" id="navBurgerBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-controls="mobileMenu">
+        <svg id="burgerIconOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <svg id="burgerIconClose" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="mobileMenu" id="mobileMenu">
+    <a href="#features" data-i18n="nav_features">核心能力</a>
+    <a href="#ai" data-i18n="nav_ai">AI 分析</a>
+    <a href="#architecture" data-i18n="nav_arch">架构</a>
+    <a href="#stack" data-i18n="nav_stack">技术栈</a>
+    <a href="#install" data-i18n="nav_install">快速开始</a>
+    <a href="#changelog" data-i18n="nav_changelog">更新日志</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="herogrid">
+      <div>
+        <div class="eyebrow">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l4 4 10-10"/></svg>
+          <span data-i18n="hero_eyebrow">v3.8 · AI 辅助分析扫描结果已上线</span>
+        </div>
+        <h1 class="hero-title" data-i18n="hero_title">深度剖析每一份 IoT 固件，<span class="grad-text">在它被攻破之前</span></h1>
+        <p class="hero-sub" data-i18n="hero_sub">
+          IFDA 是一套自动化的 IoT 固件逆向与漏洞发现工具:多架构反汇编、CVE 关联、污点可达性分析、
+          跨二进制调用链追踪,外加可选的 AI 辅助分析——全部自托管,数据不出本地。
+        </p>
+        <div class="cta-row">
+          <a class="btn primary" href="https://github.com/cn0xroot/IFDA" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M7 7h10v10"/></svg>
+            <span data-i18n="cta_github">查看源码</span>
+          </a>
+          <a class="btn ghost" href="#install">
+            <span data-i18n="cta_start">快速开始</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+        </div>
+        <div class="warnchip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 20h20L12 3Z" stroke-linejoin="round"/><path d="M12 9v5" stroke-linecap="round"/><circle cx="12" cy="17.3" r=".6" fill="currentColor" stroke="none"/></svg>
+          <span data-i18n="hero_warn">仅限用于你拥有或已获授权评估的固件。防御性/授权安全研究用途。</span>
+        </div>
+      </div>
+      <div>
+        <div class="term">
+          <div class="term-bar">
+            <span class="term-dot" style="background:#f87171"></span>
+            <span class="term-dot" style="background:#facc15"></span>
+            <span class="term-dot" style="background:#4ade80"></span>
+            <span class="mono" style="font-size:11px;color:var(--muted);margin-left:6px">ifda — zsh</span>
+          </div>
+          <pre><span class="c4"># 分析一个已解包的固件根目录</span>
+<span class="c1">$</span> python3 -m ifda.cli analyze ./rootfs \
+    --json report.json --sbom sbom.json --progress
+
+<span class="c4">@@IFDA@@</span>{"stage":"disassemble","pct":18,...}
+<span class="c4">@@IFDA@@</span>{"stage":"cve-scan","pct":64,...}
+<span class="c4">@@IFDA@@</span>{"stage":"done","pct":100,"detail":"37 findings"}
+
+<span class="c4"># 摘出一条高危发现</span>
+{
+  "title": <span class="c3">"Hardcoded credential reachable from telnetd"</span>,
+  "severity": <span class="c2">"critical"</span>, "confidence": 0.8,
+  "vuln_class": "command_injection",
+  "cve_ids": ["CVE-2016-5195"],
+  "evidence": [{ "binary": "/usr/sbin/telnetd", "function": "handle_login" }]
+}</pre>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="n">6</div><div class="l" data-i18n="stat_arch">CPU 架构</div></div>
+          <div class="stat"><div class="n">9+</div><div class="l" data-i18n="stat_vuln">漏洞类别</div></div>
+          <div class="stat"><div class="n">3</div><div class="l" data-i18n="stat_fmt">报告格式</div></div>
+          <div class="stat"><div class="n">100%</div><div class="l" data-i18n="stat_local">自托管运行</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="audience">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="who_eyebrow">适用人群</div>
+    <h2 class="sec-title" data-i18n="who_title">为谁而做</h2>
+    <p class="sec-sub" data-i18n="who_sub">不只是安全团队——任何需要静态审计一份 IoT 固件的人都用得上。</p>
+    <div class="grid c4">
+      <div class="card">
+        <div class="badge g-indigo">01</div>
+        <h3 data-i18n="who1_t">IoT 安全研究者</h3>
+        <p data-i18n="who1_d">批量分析厂商固件,定位可复用的漏洞类别与后门。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-violet">02</div>
+        <h3 data-i18n="who2_t">渗透测试 / 红队</h3>
+        <p data-i18n="who2_d">在没有设备物理接入的情况下,先用静态分析圈定攻击面。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-cyan">03</div>
+        <h3 data-i18n="who3_t">厂商安全 / QA</h3>
+        <p data-i18n="who3_d">发布前自查:硬编码凭据、弱鉴权、危险函数、过期组件。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-green">04</div>
+        <h3 data-i18n="who4_t">学习者 / CTF 玩家</h3>
+        <p data-i18n="who4_d">读得到伪代码、taint 路径、调用图——把黑盒过程变成可学习的证据链。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="why_eyebrow">为什么选择 IFDA</div>
+    <h2 class="sec-title" data-i18n="why_title">静态分析,做到有证据、可复现</h2>
+    <p class="sec-sub" data-i18n="why_sub">每一条发现都带置信度、代码位置和污点路径——不是一个模糊的"可能有问题"。</p>
+    <div class="grid c3">
+      <div class="card">
+        <div class="badge g-indigo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+        </div>
+        <h3 data-i18n="why1_t">无需真机的多架构逆向</h3>
+        <p data-i18n="why1_d">x86/x86_64、ARM、ARM Thumb-2、AArch64、MIPS LE/BE——纯静态反汇编 + 导入调用解析,剥离符号也能恢复函数边界。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-cyan">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+        </div>
+        <h3 data-i18n="why2_t">CVE 关联不靠猜</h3>
+        <p data-i18n="why2_d">离线策展库 + <span class="mono">cve-bin-tool</span>(NVD/OSV/RedHat/GitLab/Curl,350+ 组件),内核版本单独用自研探测器关联,规避第三方 checker 的正则死角。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-rose">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8 6h5a5 5 0 015 5v5"/></svg>
+        </div>
+        <h3 data-i18n="why3_t">污点 + 跨二进制追踪</h3>
+        <p data-i18n="why3_d">source → sink 可达性分析穿透调用图,并追踪 CGI/脚本调用到共享库内部的真实汇聚点,而不是止步于单个文件。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-violet">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a5 5 0 015 5c0 2-1 3-2 4s-1 2-1 3H10c0-1 0-2-1-3s-2-2-2-4a5 5 0 015-5Z"/><path d="M10 19h4M11 22h2"/></svg>
+        </div>
+        <h3 data-i18n="why4_t">AI 辅助分诊(新)</h3>
+        <p data-i18n="why4_d">按需对已完成的扫描结果做 AI 分析——误报过滤、跨发现关联出攻击链、修复优先级建议,支持任意 OpenAI 兼容服务商。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-amber">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>
+        </div>
+        <h3 data-i18n="why5_t">自托管、可离线</h3>
+        <p data-i18n="why5_d">Go 服务层零第三方依赖(仅标准库),前端 Alpine.js 本地打包无需构建步骤——单文件部署,气隙环境也能跑。</p>
+      </div>
+      <div class="card">
+        <div class="badge g-green">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2Z"/><path d="M14 3v5h5"/></svg>
+        </div>
+        <h3 data-i18n="why6_t">CLI + REST API 双形态</h3>
+        <p data-i18n="why6_d">一次性脚本化调用,或起服务用队列 + 网页看板批量跑一整批固件——同一套分析核心。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="feat_eyebrow">核心能力</div>
+    <h2 class="sec-title" data-i18n="feat_title">从反汇编到报告,一条流水线</h2>
+    <p class="sec-sub" data-i18n="feat_sub">按能力分类浏览——每一项都能在需求文档里追溯到对应的 FR 编号。</p>
+
+    <div class="cat-tabs">
+      <button class="cat-tab active" data-cat="re" data-i18n="tab_re">逆向工程</button>
+      <button class="cat-tab" data-cat="vul" data-i18n="tab_vul">漏洞发现</button>
+      <button class="cat-tab" data-cat="inv" data-i18n="tab_inv">固件盘点</button>
+      <button class="cat-tab" data-cat="rep" data-i18n="tab_rep">报告与服务</button>
+    </div>
+
+    <div class="cat-panel active" data-cat="re">
+      <div class="grid c3">
+        <div class="card"><div class="badge g-indigo">RE</div><h3 data-i18n="re1_t">多架构反汇编</h3><p data-i18n="re1_d">基于 capstone,x86/x86_64/ARM/Thumb-2/AArch64/MIPS,不依赖目标主机架构。</p><span class="fr mono">FR-RE-1</span></div>
+        <div class="card"><div class="badge g-indigo">RE</div><h3 data-i18n="re2_t">调用图与函数边界</h3><p data-i18n="re2_d">符号优先 + 剥离符号后的直接调用/函数序言恢复兜底,ARM/Thumb 自动判别。</p><span class="fr mono">FR-RE-3</span></div>
+        <div class="card"><div class="badge g-indigo">RE</div><h3 data-i18n="re3_t">导入调用解析</h3><p data-i18n="re3_d">x86 PLT、ARM/AArch64 PLT、MIPS GOT + <span class="mono">jalr $t9</span> 全覆盖,含 PIC 场景。</p><span class="fr mono">FR-RE-1</span></div>
+        <div class="card"><div class="badge g-indigo">RE</div><h3 data-i18n="re4_t">加固检测</h3><p data-i18n="re4_d">NX / Stack Canary / RELRO / PIE / FORTIFY 逐项识别,评估利用难度。</p><span class="fr mono">FR-RE-5</span></div>
+        <div class="card"><div class="badge g-indigo">RE</div><h3 data-i18n="re5_t">交叉引用</h3><p data-i18n="re5_d">调用点、字符串引用双向索引,定位"谁调用了这个危险函数"秒级完成。</p><span class="fr mono">FR-RE-6</span></div>
+        <div class="card"><div class="badge g-indigo">RE</div><h3 data-i18n="re6_t">Ghidra 反编译(可选)</h3><p data-i18n="re6_d">headless 模式产出伪代码,直接挂到对应 finding 上,不用来回切工具。</p><span class="fr mono">FR-RE-2</span></div>
+      </div>
+    </div>
+
+    <div class="cat-panel" data-cat="vul">
+      <div class="grid c3">
+        <div class="card"><div class="badge g-rose">VUL</div><h3 data-i18n="vul1_t">CVE 关联</h3><p data-i18n="vul1_d">离线库 + cve-bin-tool 双引擎,内核版本单独精确关联(Dirty COW / Dirty Pipe 等)。</p><span class="fr mono">FR-VUL-1</span></div>
+        <div class="card"><div class="badge g-rose">VUL</div><h3 data-i18n="vul2_t">危险函数检测</h3><p data-i18n="vul2_d"><span class="mono">strcpy/system/sprintf</span> 等经典危险调用一次扫全。</p><span class="fr mono">FR-VUL-2</span></div>
+        <div class="card"><div class="badge g-rose">VUL</div><h3 data-i18n="vul3_t">污点可达性</h3><p data-i18n="vul3_d">source(<span class="mono">getenv/recv</span> 等) → sink 调用图可达性,标出候选路径供人工复核。</p><span class="fr mono">FR-VUL-3</span></div>
+        <div class="card"><div class="badge g-rose">VUL</div><h3 data-i18n="vul4_t">9+ 漏洞类别</h3><p data-i18n="vul4_d">缓冲区溢出、命令注入、代码注入、文件包含、反序列化、格式化字符串、弱加密、路径遍历、鉴权逻辑弱点。</p><span class="fr mono">FR-VUL-4</span></div>
+        <div class="card"><div class="badge g-rose">VUL</div><h3 data-i18n="vul5_t">跨二进制分析</h3><p data-i18n="vul5_d">全局调用图串联 CGI → 共享库,发现单文件视角看不到的攻击链。</p><span class="fr mono">FR-VUL-5</span></div>
+        <div class="card"><div class="badge g-rose">VUL</div><h3 data-i18n="vul6_t">优先级 + 分诊留存</h3><p data-i18n="vul6_d">按严重度/置信度排序;分诊状态按指纹持久化,重扫不丢历史决策。</p><span class="fr mono">FR-VUL-7/8</span></div>
+      </div>
+    </div>
+
+    <div class="cat-panel" data-cat="inv">
+      <div class="grid c3">
+        <div class="card"><div class="badge g-cyan">INV</div><h3 data-i18n="inv1_t">嵌入式密钥/凭据</h3><p data-i18n="inv1_d">私钥、哈希、硬编码账号密码/令牌 + 高熵兜底,可外置规则库(YARA 可选)。</p><span class="fr mono">FR-INV-4</span></div>
+        <div class="card"><div class="badge g-cyan">INV</div><h3 data-i18n="inv2_t">网络服务识别</h3><p data-i18n="inv2_d">WEB/SSH/FTP/Telnet/SOAP/DNS/SNMP/UPnP/WiFi 管理守护进程,版本只认内嵌 banner,端口按配置/inetd/启动参数/默认值推断。</p><span class="fr mono">FR-INV</span></div>
+        <div class="card"><div class="badge g-cyan">INV</div><h3 data-i18n="inv3_t">BusyBox 应用套件审计</h3><p data-i18n="inv3_d">已编译 vs 参考列表比对、bin/sbin 额外可执行文件、init.d 脚本全量转储。</p><span class="fr mono">FR-INV</span></div>
+        <div class="card"><div class="badge g-cyan">INV</div><h3 data-i18n="inv4_t">证书检测</h3><p data-i18n="inv4_d">逐证书判定 RSA/非 RSA,支持证书链/bundle,基于 <span class="mono">cryptography</span> 库而非猜测式 PEM 头匹配。</p><span class="fr mono">FR-INV</span></div>
+        <div class="card"><div class="badge g-cyan">INV</div><h3 data-i18n="inv5_t">配置文件分类 + 加固审计</h3><p data-i18n="inv5_d">按扩展名/路径/UCI/内容嗅探分类,内容层面检查 telnet、匿名 FTP、调试模式、默认 SNMP 团体字、TLS 校验关闭等。</p><span class="fr mono">FR-INV</span></div>
+        <div class="card"><div class="badge g-cyan">INV</div><h3 data-i18n="inv6_t">完整文件清单</h3><p data-i18n="inv6_d">不止 ELF 和识别出的脚本——目标下的每一个文件都在清单里,确认扫描没有遗漏角落。</p><span class="fr mono">FR-INV</span></div>
+      </div>
+    </div>
+
+    <div class="cat-panel" data-cat="rep">
+      <div class="grid c3">
+        <div class="card"><div class="badge g-green">REP</div><h3 data-i18n="rep1_t">JSON / Markdown / SBOM</h3><p data-i18n="rep1_d">结构化 JSON 作为集成契约,Markdown 摘要给人看,CycloneDX SBOM 直接喂 Dependency-Track。</p><span class="fr mono">FR-REP-1/2</span></div>
+        <div class="card"><div class="badge g-green">REP</div><h3 data-i18n="rep2_t">REST API + 队列</h3><p data-i18n="rep2_d">批量提交、并发 worker、按内容去重缓存,SSE 推送进度,不用轮询。</p><span class="fr mono">FR-INT-1</span></div>
+        <div class="card"><div class="badge g-green">REP</div><h3 data-i18n="rep3_t">Web 看板</h3><p data-i18n="rep3_d">Alpine.js 单页应用:发现筛选、分诊、对比扫描、7 套主题、双语界面。</p><span class="fr mono">FR-INT-1</span></div>
+        <div class="card"><div class="badge g-green">REP</div><h3 data-i18n="rep4_t">对比扫描</h3><p data-i18n="rep4_d">两次扫描结果 diff——新增/消失的字符串、敏感信息、发现,一眼看出补丁效果。</p><span class="fr mono">FR-INT</span></div>
+        <div class="card"><div class="badge g-green">REP</div><h3 data-i18n="rep5_t">登录鉴权</h3><p data-i18n="rep5_d">PBKDF2 密码哈希 + 按账号锁定 + 登录验证码,标准库手写实现,零额外依赖。</p><span class="fr mono">NFR-SEC</span></div>
+        <div class="card"><div class="badge g-green">REP</div><h3 data-i18n="rep6_t">SQLite 持久化</h3><p data-i18n="rep6_d">发现/二进制/脚本/组件全部落库分页,大规模扫描(3000+ 发现)不再撑爆浏览器标签页。</p><span class="fr mono">FR-INT</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="ai" style="background:linear-gradient(180deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent)">
+  <div class="wrap">
+    <div class="spotlight">
+      <div>
+        <div class="eyebrow" data-i18n="ai_eyebrow">v3.8 新特性</div>
+        <h2 class="sec-title" data-i18n="ai_title">AI 分析扫描结果</h2>
+        <p class="sec-sub" style="margin-bottom:26px" data-i18n="ai_sub">
+          在规则引擎产出的发现之上,加一层可选的 AI 辅助分析——不是重新扫描固件,只是帮你更快看懂已有结果。
+        </p>
+        <ul>
+          <li><div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.5"><path d="M5 12l4 4 10-10"/></svg></div>
+            <div><strong data-i18n="ai1_t">按需触发,不产生意外成本</strong><span data-i18n="ai1_d">报告详情页一个按钮,自己选服务商和时机——不会每次扫描都自动调用外部 API。</span></div></li>
+          <li><div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.5"><path d="M5 12l4 4 10-10"/></svg></div>
+            <div><strong data-i18n="ai2_t">任意 OpenAI 兼容服务商</strong><span data-i18n="ai2_d">自定义 Host URL——自建网关(one-api / newapi / vLLM / Ollama)或云端服务商都行,支持同时配置多个。</span></div></li>
+          <li><div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.5"><path d="M5 12l4 4 10-10"/></svg></div>
+            <div><strong data-i18n="ai3_t">模型下拉选,不用手打</strong><span data-i18n="ai3_d">填完 Host + Key,拉一次 <span class="mono">/models</span> 接口,列表里选,拉取失败前无法保存——从根上杜绝模型名手误。</span></div></li>
+          <li><div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.5"><path d="M5 12l4 4 10-10"/></svg></div>
+            <div><strong data-i18n="ai4_t">Key 加密落盘</strong><span data-i18n="ai4_d">AES-256-GCM + 本地随机密钥文件,标准库实现;接口响应里永远只看得到末 4 位。</span></div></li>
+          <li><div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.5"><path d="M5 12l4 4 10-10"/></svg></div>
+            <div><strong data-i18n="ai5_t">对 prompt 注入有防备</strong><span data-i18n="ai5_d">固件里提取出的文本(描述/伪代码)被明确当作"证据数据"喂给模型,而非指令;输出只以纯文本渲染,绝不解析成 HTML。</span></div></li>
+        </ul>
+      </div>
+      <div class="chatmock">
+        <div class="row">
+          <div class="avatar" style="background:var(--panel2);display:flex;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
+          </div>
+          <div class="bubble" data-i18n="ai_chat_sys">系统:已加载 13 条 findings(3 严重 / 5 高危),开始分析…</div>
+        </div>
+        <div class="row">
+          <div class="avatar" style="background:linear-gradient(135deg,var(--accent),var(--accent2))"></div>
+          <div class="bubble" data-i18n="ai_chat_ai">
+            发现 #4(硬编码凭据,telnetd)与 #9(该凭据可从 web 后台的鉴权逻辑弱点触达)可以拼成一条完整攻击链:
+            未授权访问 web 面板 → 绕过弱 <span class="mono">strcmp</span> 鉴权 → 拿到 telnetd 硬编码口令 → 设备完全沦陷。
+            建议优先修复 #9 的鉴权逻辑,其次轮换 #4 的凭据。
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:0">
+          <div class="avatar" style="background:var(--panel2)"></div>
+          <div class="bubble user" data-i18n="ai_chat_meta">已覆盖 13/13 条 findings · 模型:fake-gpt-mini · 用时 4.2s</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="arch_eyebrow">架构</div>
+    <h2 class="sec-title" data-i18n="arch_title">Python 分析核心 + Go 服务层</h2>
+    <p class="sec-sub" data-i18n="arch_sub">核心是一个可独立调用的库/CLI;Go 服务层负责编排、队列与 Web 界面,两者以 JSON 为契约。</p>
+
+    <div class="pipeline">
+      <div class="pl-box"><div class="n mono">01</div><strong data-i18n="pl1_t">Loader</strong><span data-i18n="pl1_d">架构/导入表/字符串</span></div>
+      <div class="pl-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pl-box"><div class="n mono">02</div><strong data-i18n="pl2_t">Disassemble</strong><span data-i18n="pl2_d">加固检测/调用图/交叉引用</span></div>
+      <div class="pl-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pl-box"><div class="n mono">03</div><strong data-i18n="pl3_t">Vuln Scan</strong><span data-i18n="pl3_d">危险函数/污点/CVE/跨二进制</span></div>
+      <div class="pl-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pl-box"><div class="n mono">04</div><strong data-i18n="pl4_t">Inventory</strong><span data-i18n="pl4_d">密钥/服务/BusyBox/证书</span></div>
+      <div class="pl-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="pl-box"><div class="n mono">05</div><strong data-i18n="pl5_t">Report</strong><span data-i18n="pl5_d">JSON / Markdown / SBOM</span></div>
+    </div>
+
+    <div class="archrow">
+      <div class="archcol">
+        <h4 data-i18n="arch_py_h">Python 分析核心</h4>
+        <ul>
+          <li data-i18n="arch_py1">纯库 + CLI,可独立于服务层使用</li>
+          <li data-i18n="arch_py2">流式输出 <span class="mono">@@IFDA@@&lt;json&gt;</span> 进度事件</li>
+          <li data-i18n="arch_py3"><span class="mono">ifda/model.py</span> 定义与 Go 侧共享的 JSON 契约</li>
+        </ul>
+      </div>
+      <div class="archcol">
+        <h4 data-i18n="arch_go_h">Go 服务层</h4>
+        <ul>
+          <li data-i18n="arch_go1">队列 + 并发 worker,逐任务调用 Python CLI</li>
+          <li data-i18n="arch_go2">REST API、SQLite 报告存储、SSE 进度推送</li>
+          <li data-i18n="arch_go3">AI provider 配置管理与按需分析调用(v3.8)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="stack_eyebrow">技术栈</div>
+    <h2 class="sec-title" data-i18n="stack_title">用成熟的部件,不重复造轮子</h2>
+    <p class="sec-sub" data-i18n="stack_sub">虚线标注的是可选依赖——缺失时功能优雅降级,而不是直接崩溃。</p>
+
+    <div class="stacklane">
+      <h4 data-i18n="stack_core">分析核心(Python 3.10+）</h4>
+      <div class="chiprow">
+        <span class="chip">capstone</span><span class="chip">pyelftools</span><span class="chip">cve-bin-tool</span>
+        <span class="chip opt">yara-python (optional)</span><span class="chip opt">angr (planned)</span>
+      </div>
+    </div>
+    <div class="stacklane">
+      <h4 data-i18n="stack_svc">服务层(Go 1.22+，零第三方依赖）</h4>
+      <div class="chiprow">
+        <span class="chip">net/http ServeMux</span><span class="chip">crypto/hmac + sha256 (PBKDF2)</span>
+        <span class="chip">image/png (CAPTCHA)</span><span class="chip">modernc.org/sqlite</span><span class="chip">Server-Sent Events</span>
+      </div>
+    </div>
+    <div class="stacklane">
+      <h4 data-i18n="stack_web">Web UI</h4>
+      <div class="chiprow">
+        <span class="chip">Alpine.js 3.14.1(本地打包)</span><span class="chip">纯 CSS 自定义属性主题(7 套)</span>
+      </div>
+    </div>
+    <div class="stacklane">
+      <h4 data-i18n="stack_opt">可选增强</h4>
+      <div class="chiprow">
+        <span class="chip opt">Ghidra headless(反编译)</span>
+        <span class="chip opt">任意 OpenAI 兼容 AI 服务商</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="preview">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="prev_eyebrow">界面预览</div>
+    <h2 class="sec-title" data-i18n="prev_title">看板长什么样</h2>
+    <p class="sec-sub" data-i18n="prev_sub">下方是界面结构的示意重绘,不是截图——真实界面以实际部署为准。</p>
+    <div class="browser">
+      <div class="browser-bar">
+        <span class="term-dot" style="background:#f87171"></span><span class="term-dot" style="background:#facc15"></span><span class="term-dot" style="background:#4ade80"></span>
+        <div class="browser-url">localhost:8080 — IFDA</div>
+      </div>
+      <div class="mockbody">
+        <div class="mocktabs">
+          <span class="on" data-i18n="mt1">仪表盘</span><span data-i18n="mt2">发现 (37)</span><span data-i18n="mt3">二进制</span><span data-i18n="mt4">服务</span><span data-i18n="mt5">AI分析</span>
+        </div>
+        <div class="mockcards">
+          <div class="mockcard"><div class="n">37</div><div class="l" data-i18n="mc1">发现</div></div>
+          <div class="mockcard"><div class="n" style="color:var(--crit)">4</div><div class="l" data-i18n="mc2">严重</div></div>
+          <div class="mockcard"><div class="n" style="color:var(--warn)">9</div><div class="l" data-i18n="mc3">高危</div></div>
+          <div class="mockcard"><div class="n">14</div><div class="l" data-i18n="mc4">二进制</div></div>
+          <div class="mockcard"><div class="n">6</div><div class="l" data-i18n="mc5">CVE</div></div>
+        </div>
+        <div class="mockfinding"><span class="sevdot" style="background:var(--crit)"></span><span class="ft" data-i18n="mf1">硬编码凭据可被 telnetd 触达</span><span class="fc">CVE-2016-5195</span></div>
+        <div class="mockfinding"><span class="sevdot" style="background:var(--warn)"></span><span class="ft" data-i18n="mf2">web 后台鉴权使用非常量时间比较</span><span class="fc mono">auth-logic-weak</span></div>
+        <div class="mockfinding"><span class="sevdot" style="background:#eab308"></span><span class="ft" data-i18n="mf3">CGI 参数未过滤拼接进 fopen()</span><span class="fc mono">path_traversal</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="install_eyebrow">快速开始</div>
+    <h2 class="sec-title" data-i18n="install_title">几分钟内跑起第一次扫描</h2>
+    <p class="sec-sub" data-i18n="install_sub">完整环境搭建(交叉编译器、Ghidra/JDK 踩坑记录)见仓库里的 ENVIRONMENT.md。</p>
+
+    <div class="grid c2">
+      <div>
+        <h3 style="font-size:14px;margin:0 0 10px" data-i18n="install_cli_h">1 · 分析核心</h3>
+        <div class="codeblock">
+          <pre><span class="comment"># apt / pip 二选一</span>
+apt-get install -y python3-capstone python3-pyelftools
+pip install cve-bin-tool   <span class="comment"># FR-VUL-1 必需</span>
+pip install yara-python    <span class="comment"># 可选</span>
+
+python3 -m ifda.cli analyze ./rootfs \
+  --json report.json --md report.md --sbom sbom.json</pre>
+        </div>
+      </div>
+      <div>
+        <h3 style="font-size:14px;margin:0 0 10px" data-i18n="install_svc_h">2 · 服务层(可选,REST API + Web UI)</h3>
+        <div class="codeblock">
+          <pre><span class="comment"># Go 1.22+</span>
+cd service &amp;&amp; go build -o ifda-service .
+
+./ifda-service -addr :8080 \
+  -core /path/to/IFDA -data ./.data \
+  -user admin -pass 'change-me'
+<span class="comment"># open http://localhost:8080</span></pre>
+        </div>
+      </div>
+    </div>
+    <div class="callout warn" style="margin-top:8px">
+      <h4 data-i18n="install_warn_h">关于 cve-bin-tool 首次运行</h4>
+      <p data-i18n="install_warn_d">它会在本机维护一份 NVD/OSV/RedHat/GitLab/Curl 的本地 CVE 数据库(约 1GB+),首次扫描会先同步这份数据,需要联网且较慢——之后的扫描直接复用本地缓存。缺失时分析仍会运行,只是 CVE 关联退化为内置的小型策展库,并在报告里给出明确提示。</p>
+    </div>
+  </div>
+</section>
+
+<section id="changelog">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="cl_eyebrow">更新日志</div>
+    <h2 class="sec-title" data-i18n="cl_title">最近几个版本</h2>
+    <p class="sec-sub" data-i18n="cl_sub">完整记录见仓库里的 <span class="mono">CHANGELOG.md</span>(英文)与 <span class="mono">PROGRESS.md</span>(中文,含根因和验证细节)。</p>
+    <div class="tl">
+      <div class="tl-item"><span class="v">v3.8</span><span class="d">2026-07-26</span><p data-i18n="cl_v38">AI 分析扫描结果 + AI 服务商配置管理,全部在 Go 服务层实现,Python 核心零改动。</p></div>
+      <div class="tl-item"><span class="v">v3.7</span><span class="d">2026-07-11</span><p data-i18n="cl_v37">内核版本 CVE 关联(Dirty COW / Dirty Pipe 精确区间匹配)+ 修复内核 banner 扫描上限截断 bug。</p></div>
+      <div class="tl-item"><span class="v">v3.6</span><span class="d">2026-07-11</span><p data-i18n="cl_v36">新增路径遍历检测(复用污点引擎)与鉴权逻辑弱点检测(非常量时间比较识别)。</p></div>
+      <div class="tl-item"><span class="v">v3.5</span><span class="d">2026-07-08</span><p data-i18n="cl_v35">新增网络服务识别(WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi),独立标签页 + 仪表盘展示。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="responsible">
+  <div class="wrap">
+    <div class="grid c2">
+      <div class="callout warn">
+        <h4 data-i18n="resp1_h">⚠ 授权使用声明</h4>
+        <p data-i18n="resp1_d">仅可分析你拥有或已获得书面授权评估的固件。这是一套防御性安全研究工具,不承担因滥用造成的任何后果。</p>
+      </div>
+      <div class="callout">
+        <h4 data-i18n="resp2_h">关于准确性</h4>
+        <p data-i18n="resp2_d">不做反编译的静态分析本质是启发式的。每条发现都带置信度分数——精确调用点(0.8)优先于导入存在性(0.4)与调用图污点可达性(0.5)。污点类发现是"待人工验证的候选路径",不是"已证实的可利用漏洞"。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="credits" style="border-bottom:0; padding-bottom:56px">
+  <div class="wrap">
+    <div class="eyebrow" data-i18n="cred_eyebrow">致谢</div>
+    <h2 class="sec-title" data-i18n="cred_title">站在巨人的肩膀上</h2>
+    <div class="grid c2">
+      <div class="card">
+        <h3>EMBA</h3>
+        <p data-i18n="cred_emba">开源 IoT 固件分析器,其 CVE 关联与敏感信息挖掘思路影响了本项目多处设计决策;<span class="mono">config/</span> 签名文件也启发了本项目的敏感字符串字典。</p>
+        <a href="https://github.com/e-m-b-a/emba" target="_blank" rel="noopener" style="font-size:12.5px;margin-top:10px;display:inline-block" data-i18n="cred_link">→ github.com/e-m-b-a/emba</a>
+      </div>
+      <div class="card">
+        <h3>cve-bin-tool</h3>
+        <p data-i18n="cred_cbt">OpenSSF 项目,FR-VUL-1 广谱 CVE 覆盖背后的实际引擎——EMBA 自己也在用它做 CVE 关联。</p>
+        <a href="https://github.com/intel/cve-bin-tool" target="_blank" rel="noopener" style="font-size:12.5px;margin-top:10px;display:inline-block" data-i18n="cred_link2">→ github.com/intel/cve-bin-tool</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="footgrid">
+      <div style="max-width:280px">
+        <div class="brand" style="margin-bottom:10px">
+          <div class="brandmark">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" stroke="#fff"><path d="M12 2 4 5.5v6c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-6L12 2Z"/><path d="M9.5 12.2 11.3 14l3.4-4"/></svg>
+          </div>
+          IFDA
+        </div>
+        <p style="font-size:12.8px;color:var(--muted);margin:0" data-i18n="foot_tag">自动化 IoT 固件逆向与漏洞发现。开源、自托管、可离线运行。</p>
+      </div>
+      <div class="footlinks">
+        <div>
+          <strong data-i18n="foot_docs">文档</strong>
+          <a href="https://github.com/cn0xroot/IFDA#readme" target="_blank" rel="noopener">README</a>
+          <a href="https://github.com/cn0xroot/IFDA/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+          <a href="https://github.com/cn0xroot/IFDA/blob/main/PROGRESS.md" target="_blank" rel="noopener" data-i18n="foot_progress">开发进度(中文)</a>
+          <a href="https://github.com/cn0xroot/IFDA/blob/main/ENVIRONMENT.md" target="_blank" rel="noopener" data-i18n="foot_env">环境搭建</a>
+        </div>
+        <div>
+          <strong data-i18n="foot_project">项目</strong>
+          <a href="https://github.com/cn0xroot/IFDA" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/cn0xroot/IFDA/issues" target="_blank" rel="noopener" data-i18n="foot_issues">提交 Issue</a>
+          <a href="https://github.com/cn0xroot/IFDA/blob/main/firmware-analysis-requirements.md" target="_blank" rel="noopener" data-i18n="foot_reqs">需求文档</a>
+        </div>
+      </div>
+    </div>
+    <div class="footbottom">
+      <span data-i18n="foot_oss">开源项目,欢迎贡献。</span>
+      <span data-i18n="foot_disclaimer">仅限防御性 / 授权安全研究用途。</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+const I18N = {
+  nav_features:{en:"Features",zh:"核心能力"}, nav_ai:{en:"AI Analysis",zh:"AI 分析"},
+  nav_arch:{en:"Architecture",zh:"架构"}, nav_stack:{en:"Tech Stack",zh:"技术栈"},
+  nav_install:{en:"Quick Start",zh:"快速开始"}, nav_changelog:{en:"Changelog",zh:"更新日志"},
+
+  hero_eyebrow:{en:"v3.8 · AI-assisted analysis of scan results is live",zh:"v3.8 · AI 辅助分析扫描结果已上线"},
+  hero_title:{en:'Deeply inspect every IoT firmware, <span class="grad-text">before someone else exploits it</span>',
+              zh:'深度剖析每一份 IoT 固件，<span class="grad-text">在它被攻破之前</span>'},
+  hero_sub:{en:"IFDA is an automated reverse-engineering and vulnerability-discovery tool for IoT firmware: multi-arch disassembly, CVE correlation, taint reachability, cross-binary call-chain tracing — plus optional AI-assisted analysis. Fully self-hosted, your data never leaves your machine.",
+            zh:"IFDA 是一套自动化的 IoT 固件逆向与漏洞发现工具：多架构反汇编、CVE 关联、污点可达性分析、跨二进制调用链追踪，外加可选的 AI 辅助分析——全部自托管，数据不出本地。"},
+  cta_github:{en:"View on GitHub",zh:"查看源码"}, cta_start:{en:"Quick Start",zh:"快速开始"},
+  hero_warn:{en:"Only analyze firmware you own or are explicitly authorized to assess. Defensive / authorized security research use only.",
+             zh:"仅限用于你拥有或已获授权评估的固件。防御性/授权安全研究用途。"},
+  stat_arch:{en:"CPU architectures",zh:"CPU 架构"}, stat_vuln:{en:"vuln classes",zh:"漏洞类别"},
+  stat_fmt:{en:"report formats",zh:"报告格式"}, stat_local:{en:"self-hosted",zh:"自托管运行"},
+
+  who_eyebrow:{en:"Who it's for",zh:"适用人群"}, who_title:{en:"Built for anyone auditing IoT firmware",zh:"为谁而做"},
+  who_sub:{en:"Not just security teams — anyone who needs a static audit of an IoT firmware image.",zh:"不只是安全团队——任何需要静态审计一份 IoT 固件的人都用得上。"},
+  who1_t:{en:"IoT Security Researchers",zh:"IoT 安全研究者"}, who1_d:{en:"Batch-analyze vendor firmware to find recurring vulnerability classes and backdoors.",zh:"批量分析厂商固件，定位可复用的漏洞类别与后门。"},
+  who2_t:{en:"Pentesters / Red Teams",zh:"渗透测试 / 红队"}, who2_d:{en:"Scope the attack surface statically before you ever touch physical hardware.",zh:"在没有设备物理接入的情况下，先用静态分析圈定攻击面。"},
+  who3_t:{en:"Vendor Security / QA",zh:"厂商安全 / QA"}, who3_d:{en:"Pre-release self-audit: hardcoded credentials, weak auth, dangerous calls, stale components.",zh:"发布前自查：硬编码凭据、弱鉴权、危险函数、过期组件。"},
+  who4_t:{en:"Learners / CTF Players",zh:"学习者 / CTF 玩家"}, who4_d:{en:"Real pseudocode, taint paths and call graphs turn a black box into a learnable evidence trail.",zh:"读得到伪代码、taint 路径、调用图——把黑盒过程变成可学习的证据链。"},
+
+  why_eyebrow:{en:"Why IFDA",zh:"为什么选择 IFDA"}, why_title:{en:"Static analysis, backed by evidence",zh:"静态分析，做到有证据、可复现"},
+  why_sub:{en:"Every finding carries a confidence score, a code location, and (where relevant) a taint path — never a vague \"might be an issue.\"",zh:"每一条发现都带置信度、代码位置和污点路径——不是一个模糊的“可能有问题”。"},
+  why1_t:{en:"Multi-arch RE, no live device needed",zh:"无需真机的多架构逆向"}, why1_d:{en:"x86/x86_64, ARM, ARM Thumb-2, AArch64, MIPS LE/BE — pure static disassembly + import resolution, with function-boundary recovery even on stripped binaries.",zh:"x86/x86_64、ARM、ARM Thumb-2、AArch64、MIPS LE/BE——纯静态反汇编 + 导入调用解析，剥离符号也能恢复函数边界。"},
+  why2_t:{en:"CVE correlation you can trust",zh:"CVE 关联不靠猜"}, why2_d:{en:'Curated offline DB + <span class="mono">cve-bin-tool</span> (NVD/OSV/RedHat/GitLab/Curl, 350+ components); kernel version gets its own precise correlator to dodge third-party checker regex gaps.',zh:'离线策展库 + <span class="mono">cve-bin-tool</span>（NVD/OSV/RedHat/GitLab/Curl，350+ 组件），内核版本单独用自研探测器关联，规避第三方 checker 的正则死角。'},
+  why3_t:{en:"Taint + cross-binary tracing",zh:"污点 + 跨二进制追踪"}, why3_d:{en:"Source-to-sink reachability through the call graph, tracing CGI/script calls into shared-library sinks — not just single-file analysis.",zh:"source → sink 可达性分析穿透调用图，并追踪 CGI/脚本调用到共享库内部的真实汇聚点，而不是止步于单个文件。"},
+  why4_t:{en:"AI-assisted triage (new)",zh:"AI 辅助分诊(新)"}, why4_d:{en:"On-demand AI analysis of a completed scan's findings — false-positive triage, exploit-chain correlation, remediation priority — with any OpenAI-compatible provider.",zh:"按需对已完成的扫描结果做 AI 分析——误报过滤、跨发现关联出攻击链、修复优先级建议，支持任意 OpenAI 兼容服务商。"},
+  why5_t:{en:"Self-hosted, air-gap friendly",zh:"自托管、可离线"}, why5_d:{en:"The Go service layer has zero third-party dependencies (stdlib only); the frontend vendors Alpine.js locally with no build step — single-binary deploy, works air-gapped.",zh:"Go 服务层零第三方依赖(仅标准库)，前端 Alpine.js 本地打包无需构建步骤——单文件部署，气隙环境也能跑。"},
+  why6_t:{en:"CLI and REST API, same core",zh:"CLI + REST API 双形态"}, why6_d:{en:"Script a one-shot run, or stand up the service with a queue + web dashboard to batch an entire firmware corpus.",zh:"一次性脚本化调用，或起服务用队列 + 网页看板批量跑一整批固件——同一套分析核心。"},
+
+  feat_eyebrow:{en:"Core Capabilities",zh:"核心能力"}, feat_title:{en:"From disassembly to report, one pipeline",zh:"从反汇编到报告，一条流水线"},
+  feat_sub:{en:"Browse by category — every item traces back to a requirement ID in the spec.",zh:"按能力分类浏览——每一项都能在需求文档里追溯到对应的 FR 编号。"},
+  tab_re:{en:"Reverse Engineering",zh:"逆向工程"}, tab_vul:{en:"Vulnerability Discovery",zh:"漏洞发现"},
+  tab_inv:{en:"Firmware Inventory",zh:"固件盘点"}, tab_rep:{en:"Reporting & Service",zh:"报告与服务"},
+
+  re1_t:{en:"Multi-arch disassembly",zh:"多架构反汇编"}, re1_d:{en:"Capstone-based, x86/x86_64/ARM/Thumb-2/AArch64/MIPS — independent of the host architecture.",zh:"基于 capstone，x86/x86_64/ARM/Thumb-2/AArch64/MIPS，不依赖目标主机架构。"},
+  re2_t:{en:"Call graphs & function boundaries",zh:"调用图与函数边界"}, re2_d:{en:"Symbol-first, with direct-call/prologue recovery on stripped binaries; automatic ARM/Thumb detection.",zh:"符号优先 + 剥离符号后的直接调用/函数序言恢复兜底，ARM/Thumb 自动判别。"},
+  re3_t:{en:"Import call resolution",zh:"导入调用解析"}, re3_d:{en:'Full coverage of x86 PLT, ARM/AArch64 PLT, MIPS GOT + <span class="mono">jalr $t9</span>, including PIC.',zh:'x86 PLT、ARM/AArch64 PLT、MIPS GOT + <span class="mono">jalr $t9</span> 全覆盖，含 PIC 场景。'},
+  re4_t:{en:"Mitigation detection",zh:"加固检测"}, re4_d:{en:"NX, stack canary, RELRO, PIE, FORTIFY — assess exploitation difficulty at a glance.",zh:"NX / Stack Canary / RELRO / PIE / FORTIFY 逐项识别，评估利用难度。"},
+  re5_t:{en:"Cross-references",zh:"交叉引用"}, re5_d:{en:'"Who calls this dangerous function" resolved in both directions, instantly.',zh:'调用点、字符串引用双向索引，定位"谁调用了这个危险函数"秒级完成。'},
+  re6_t:{en:"Ghidra decompilation (optional)",zh:"Ghidra 反编译(可选)"}, re6_d:{en:"Headless-mode pseudocode attached directly to the relevant finding — no tool-hopping.",zh:"headless 模式产出伪代码，直接挂到对应 finding 上，不用来回切工具。"},
+
+  vul1_t:{en:"CVE correlation",zh:"CVE 关联"}, vul1_d:{en:"Offline DB + cve-bin-tool dual engine; kernel version gets precise correlation (Dirty COW, Dirty Pipe, etc.).",zh:"离线库 + cve-bin-tool 双引擎，内核版本单独精确关联(Dirty COW / Dirty Pipe 等)。"},
+  vul2_t:{en:"Dangerous function detection",zh:"危险函数检测"}, vul2_d:{en:'Classic risky calls like <span class="mono">strcpy/system/sprintf</span>, caught in one pass.',zh:'<span class="mono">strcpy/system/sprintf</span> 等经典危险调用一次扫全。'},
+  vul3_t:{en:"Taint reachability",zh:"污点可达性"}, vul3_d:{en:'Source (<span class="mono">getenv/recv</span>, etc.) to sink reachability through the call graph — flagged as candidate paths for review.',zh:'source(<span class="mono">getenv/recv</span> 等) → sink 调用图可达性，标出候选路径供人工复核。'},
+  vul4_t:{en:"9+ vulnerability classes",zh:"9+ 漏洞类别"}, vul4_d:{en:"Buffer overflow, command injection, code injection, file inclusion, deserialization, format string, weak crypto, path traversal, auth-logic weakness.",zh:"缓冲区溢出、命令注入、代码注入、文件包含、反序列化、格式化字符串、弱加密、路径遍历、鉴权逻辑弱点。"},
+  vul5_t:{en:"Cross-binary analysis",zh:"跨二进制分析"}, vul5_d:{en:"A global call graph links CGI to shared libraries, surfacing chains a single-file view would miss.",zh:"全局调用图串联 CGI → 共享库，发现单文件视角看不到的攻击链。"},
+  vul6_t:{en:"Prioritization + triage persistence",zh:"优先级 + 分诊留存"}, vul6_d:{en:"Sorted by severity/confidence; triage state persists by fingerprint across re-scans.",zh:"按严重度/置信度排序；分诊状态按指纹持久化，重扫不丢历史决策。"},
+
+  inv1_t:{en:"Embedded secrets/credentials",zh:"嵌入式密钥/凭据"}, inv1_d:{en:"Private keys, hashes, hardcoded credentials/tokens, plus an entropy fallback; rule library is externalized (optional YARA).",zh:"私钥、哈希、硬编码账号密码/令牌 + 高熵兜底，可外置规则库(YARA 可选)。"},
+  inv2_t:{en:"Network service identification",zh:"网络服务识别"}, inv2_d:{en:"WEB/SSH/FTP/Telnet/SOAP/DNS/SNMP/UPnP/WiFi daemons; versions only from embedded banners, ports inferred from config/inetd/launch-flag/defaults.",zh:"WEB/SSH/FTP/Telnet/SOAP/DNS/SNMP/UPnP/WiFi 管理守护进程，版本只认内嵌 banner，端口按配置/inetd/启动参数/默认值推断。"},
+  inv3_t:{en:"BusyBox applet audit",zh:"BusyBox 应用套件审计"}, inv3_d:{en:"Compiled-in vs. reference-list diff, extra bin/sbin executables, full init.d script dump.",zh:"已编译 vs 参考列表比对、bin/sbin 额外可执行文件、init.d 脚本全量转储。"},
+  inv4_t:{en:"Certificate detection",zh:"证书检测"}, inv4_d:{en:'Per-certificate RSA/non-RSA, chain/bundle-aware, via the <span class="mono">cryptography</span> library rather than a PEM-header guess.',zh:'逐证书判定 RSA/非 RSA，支持证书链/bundle，基于 <span class="mono">cryptography</span> 库而非猜测式 PEM 头匹配。'},
+  inv5_t:{en:"Config classification + hardening audit",zh:"配置文件分类 + 加固审计"}, inv5_d:{en:"Classified by extension/path/UCI/content sniff; content-level checks for telnet, anonymous FTP, debug mode, default SNMP community, TLS verify-off.",zh:"按扩展名/路径/UCI/内容嗅探分类，内容层面检查 telnet、匿名 FTP、调试模式、默认 SNMP 团体字、TLS 校验关闭等。"},
+  inv6_t:{en:"Full file listing",zh:"完整文件清单"}, inv6_d:{en:"Not just ELF binaries and recognized scripts — every file under the target, so you know nothing was skipped.",zh:"不止 ELF 和识别出的脚本——目标下的每一个文件都在清单里，确认扫描没有遗漏角落。"},
+
+  rep1_t:{en:"JSON / Markdown / SBOM",zh:"JSON / Markdown / SBOM"}, rep1_d:{en:"Structured JSON as the integration contract, Markdown for humans, CycloneDX SBOM straight into Dependency-Track.",zh:"结构化 JSON 作为集成契约，Markdown 摘要给人看，CycloneDX SBOM 直接喂 Dependency-Track。"},
+  rep2_t:{en:"REST API + queue",zh:"REST API + 队列"}, rep2_d:{en:"Batch submission, concurrent workers, content-based dedup cache, SSE progress — no polling.",zh:"批量提交、并发 worker、按内容去重缓存，SSE 推送进度，不用轮询。"},
+  rep3_t:{en:"Web dashboard",zh:"Web 看板"}, rep3_d:{en:"Alpine.js single-page app: finding filters, triage, compare-scan, 7 themes, bilingual UI.",zh:"Alpine.js 单页应用：发现筛选、分诊、对比扫描、7 套主题、双语界面。"},
+  rep4_t:{en:"Compare scans",zh:"对比扫描"}, rep4_d:{en:"Diff two scans — added/removed strings, secrets, findings — see patch impact at a glance.",zh:"两次扫描结果 diff——新增/消失的字符串、敏感信息、发现，一眼看出补丁效果。"},
+  rep5_t:{en:"Login authentication",zh:"登录鉴权"}, rep5_d:{en:"PBKDF2 password hashing + per-account lockout + login CAPTCHA, hand-rolled against stdlib only.",zh:"PBKDF2 密码哈希 + 按账号锁定 + 登录验证码，标准库手写实现，零额外依赖。"},
+  rep6_t:{en:"SQLite persistence",zh:"SQLite 持久化"}, rep6_d:{en:"Findings/binaries/scripts/components all paginated from disk — large scans (3000+ findings) no longer crash the browser tab.",zh:"发现/二进制/脚本/组件全部落库分页，大规模扫描(3000+ 发现)不再撑爆浏览器标签页。"},
+
+  ai_eyebrow:{en:"New in v3.8",zh:"v3.8 新特性"}, ai_title:{en:"AI-Assisted Analysis of Scan Results",zh:"AI 分析扫描结果"},
+  ai_sub:{en:"An optional AI layer on top of the rule-engine findings — it doesn't re-scan the firmware, it just helps you read the existing results faster.",zh:"在规则引擎产出的发现之上，加一层可选的 AI 辅助分析——不是重新扫描固件，只是帮你更快看懂已有结果。"},
+  ai1_t:{en:"On-demand, no surprise cost",zh:"按需触发，不产生意外成本"}, ai1_d:{en:"One button on the report page — you choose the provider and the moment. It never calls out automatically after every scan.",zh:"报告详情页一个按钮，自己选服务商和时机——不会每次扫描都自动调用外部 API。"},
+  ai2_t:{en:"Any OpenAI-compatible provider",zh:"任意 OpenAI 兼容服务商"}, ai2_d:{en:"Custom Host URL — self-hosted gateways (one-api / newapi / vLLM / Ollama) or a vendor API, multiple profiles at once.",zh:"自定义 Host URL——自建网关(one-api / newapi / vLLM / Ollama)或云端服务商都行，支持同时配置多个。"},
+  ai3_t:{en:"Pick the model, never type it",zh:"模型下拉选，不用手打"}, ai3_d:{en:'Enter Host + Key, fetch <span class="mono">/models</span> once, pick from the list — saving is blocked until that succeeds, eliminating typos at the root.',zh:'填完 Host + Key，拉一次 <span class="mono">/models</span> 接口，列表里选，拉取失败前无法保存——从根上杜绝模型名手误。'},
+  ai4_t:{en:"Keys encrypted at rest",zh:"Key 加密落盘"}, ai4_d:{en:"AES-256-GCM + a local random key file, stdlib only; API responses only ever show the last 4 characters.",zh:"AES-256-GCM + 本地随机密钥文件，标准库实现；接口响应里永远只看得到末 4 位。"},
+  ai5_t:{en:"Prompt-injection aware",zh:"对 prompt 注入有防备"}, ai5_d:{en:"Text extracted from firmware (descriptions/pseudocode) is explicitly framed as evidence, not instructions; output is rendered as plain text only, never parsed as HTML.",zh:"固件里提取出的文本(描述/伪代码)被明确当作“证据数据”喂给模型，而非指令；输出只以纯文本渲染，绝不解析成 HTML。"},
+  ai_chat_sys:{en:"System: loaded 13 findings (3 critical / 5 high), analyzing…",zh:"系统：已加载 13 条 findings(3 严重 / 5 高危)，开始分析…"},
+  ai_chat_ai:{en:'Finding #4 (hardcoded credential, telnetd) chains with #9 (that credential is reachable via a web-panel auth-logic weakness): unauthenticated web panel access → bypass weak <span class="mono">strcmp</span> auth → obtain the telnetd hardcoded password → full device compromise. Recommend fixing #9 first, then rotating the #4 credential.',
+             zh:'发现 #4(硬编码凭据，telnetd)与 #9(该凭据可从 web 后台的鉴权逻辑弱点触达)可以拼成一条完整攻击链：未授权访问 web 面板 → 绕过弱 <span class="mono">strcmp</span> 鉴权 → 拿到 telnetd 硬编码口令 → 设备完全沦陷。建议优先修复 #9 的鉴权逻辑，其次轮换 #4 的凭据。'},
+  ai_chat_meta:{en:"Covered 13/13 findings · model: fake-gpt-mini · 4.2s",zh:"已覆盖 13/13 条 findings · 模型：fake-gpt-mini · 用时 4.2s"},
+
+  arch_eyebrow:{en:"Architecture",zh:"架构"}, arch_title:{en:"Python core + Go service layer",zh:"Python 分析核心 + Go 服务层"},
+  arch_sub:{en:"The core is an independently callable library/CLI; the Go layer handles orchestration, queueing and the web UI — the two share a JSON contract.",zh:"核心是一个可独立调用的库/CLI；Go 服务层负责编排、队列与 Web 界面，两者以 JSON 为契约。"},
+  pl1_t:{en:"Loader",zh:"Loader"}, pl1_d:{en:"arch / imports / strings",zh:"架构/导入表/字符串"},
+  pl2_t:{en:"Disassemble",zh:"Disassemble"}, pl2_d:{en:"mitigations / call graph / xrefs",zh:"加固检测/调用图/交叉引用"},
+  pl3_t:{en:"Vuln Scan",zh:"Vuln Scan"}, pl3_d:{en:"dangerous fns / taint / CVE / cross-binary",zh:"危险函数/污点/CVE/跨二进制"},
+  pl4_t:{en:"Inventory",zh:"Inventory"}, pl4_d:{en:"secrets / services / busybox / certs",zh:"密钥/服务/BusyBox/证书"},
+  pl5_t:{en:"Report",zh:"Report"}, pl5_d:{en:"JSON / Markdown / SBOM",zh:"JSON / Markdown / SBOM"},
+  arch_py_h:{en:"Python analysis core",zh:"Python 分析核心"},
+  arch_py1:{en:"Pure library + CLI, usable independent of the service layer",zh:"纯库 + CLI，可独立于服务层使用"},
+  arch_py2:{en:'Streams <span class="mono">@@IFDA@@&lt;json&gt;</span> progress events',zh:'流式输出 <span class="mono">@@IFDA@@&lt;json&gt;</span> 进度事件'},
+  arch_py3:{en:'<span class="mono">ifda/model.py</span> defines the JSON contract shared with the Go side',zh:'<span class="mono">ifda/model.py</span> 定义与 Go 侧共享的 JSON 契约'},
+  arch_go_h:{en:"Go service layer",zh:"Go 服务层"},
+  arch_go1:{en:"Queue + concurrent workers, invoking the Python CLI per job",zh:"队列 + 并发 worker，逐任务调用 Python CLI"},
+  arch_go2:{en:"REST API, SQLite report storage, SSE progress push",zh:"REST API、SQLite 报告存储、SSE 进度推送"},
+  arch_go3:{en:"AI provider config management and on-demand analysis calls (v3.8)",zh:"AI provider 配置管理与按需分析调用(v3.8)"},
+
+  stack_eyebrow:{en:"Tech Stack",zh:"技术栈"}, stack_title:{en:"Mature parts, not reinvented wheels",zh:"用成熟的部件，不重复造轮子"},
+  stack_sub:{en:"Dashed chips are optional dependencies — missing ones degrade gracefully instead of crashing.",zh:"虚线标注的是可选依赖——缺失时功能优雅降级，而不是直接崩溃。"},
+  stack_core:{en:"Analysis core (Python 3.10+)",zh:"分析核心(Python 3.10+)"},
+  stack_svc:{en:"Service layer (Go 1.22+, zero third-party deps)",zh:"服务层(Go 1.22+，零第三方依赖)"},
+  stack_web:{en:"Web UI",zh:"Web UI"}, stack_opt:{en:"Optional enrichment",zh:"可选增强"},
+
+  prev_eyebrow:{en:"Interface Preview",zh:"界面预览"}, prev_title:{en:"What the dashboard looks like",zh:"看板长什么样"},
+  prev_sub:{en:"This is a structural illustration, not a screenshot — the real UI reflects your actual deployment.",zh:"下方是界面结构的示意重绘，不是截图——真实界面以实际部署为准。"},
+  mt1:{en:"Dashboard",zh:"仪表盘"}, mt2:{en:"Findings (37)",zh:"发现 (37)"}, mt3:{en:"Binaries",zh:"二进制"}, mt4:{en:"Services",zh:"服务"}, mt5:{en:"AI Analysis",zh:"AI分析"},
+  mc1:{en:"Findings",zh:"发现"}, mc2:{en:"Critical",zh:"严重"}, mc3:{en:"High",zh:"高危"}, mc4:{en:"Binaries",zh:"二进制"}, mc5:{en:"CVEs",zh:"CVE"},
+  mf1:{en:"Hardcoded credential reachable from telnetd",zh:"硬编码凭据可被 telnetd 触达"},
+  mf2:{en:"Web panel auth uses a non-constant-time comparison",zh:"web 后台鉴权使用非常量时间比较"},
+  mf3:{en:"Unfiltered CGI parameter concatenated into fopen()",zh:"CGI 参数未过滤拼接进 fopen()"},
+
+  install_eyebrow:{en:"Quick Start",zh:"快速开始"}, install_title:{en:"Run your first scan in a few minutes",zh:"几分钟内跑起第一次扫描"},
+  install_sub:{en:"Full environment setup (cross-compilers, Ghidra/JDK pitfalls) is in the repo's ENVIRONMENT.md.",zh:"完整环境搭建(交叉编译器、Ghidra/JDK 踩坑记录)见仓库里的 ENVIRONMENT.md。"},
+  install_cli_h:{en:"1 · Analysis core",zh:"1 · 分析核心"}, install_svc_h:{en:"2 · Service layer (optional — REST API + Web UI)",zh:"2 · 服务层(可选，REST API + Web UI)"},
+  install_warn_h:{en:"About cve-bin-tool's first run",zh:"关于 cve-bin-tool 首次运行"},
+  install_warn_d:{en:"It maintains its own local CVE database (NVD/OSV/RedHat/GitLab/Curl, ~1GB+) — the first scan on a machine syncs it and needs network access, so expect it to be slow; later scans reuse the local cache. Without it, analysis still runs, just with CVE correlation degraded to the small built-in curated DB, with a clear warning in the report.",
+                  zh:"它会在本机维护一份 NVD/OSV/RedHat/GitLab/Curl 的本地 CVE 数据库(约 1GB+)，首次扫描会先同步这份数据，需要联网且较慢——之后的扫描直接复用本地缓存。缺失时分析仍会运行，只是 CVE 关联退化为内置的小型策展库，并在报告里给出明确提示。"},
+
+  cl_eyebrow:{en:"Changelog",zh:"更新日志"}, cl_title:{en:"Recent versions",zh:"最近几个版本"},
+  cl_sub:{en:'Full history is in the repo\'s <span class="mono">CHANGELOG.md</span> (English) and <span class="mono">PROGRESS.md</span> (Chinese, with root causes and verification detail).',
+          zh:'完整记录见仓库里的 <span class="mono">CHANGELOG.md</span>(英文)与 <span class="mono">PROGRESS.md</span>(中文，含根因和验证细节)。'},
+  cl_v38:{en:"AI-assisted analysis of scan results + AI provider config management, entirely in the Go service layer, zero changes to the Python core.",zh:"AI 分析扫描结果 + AI 服务商配置管理，全部在 Go 服务层实现，Python 核心零改动。"},
+  cl_v37:{en:"Kernel-version CVE correlation (precise Dirty COW / Dirty Pipe range matching) + fixed a kernel-banner scan-cap truncation bug.",zh:"内核版本 CVE 关联(Dirty COW / Dirty Pipe 精确区间匹配)+ 修复内核 banner 扫描上限截断 bug。"},
+  cl_v36:{en:"Added path-traversal detection (reusing the taint engine) and auth-logic-weakness detection (non-constant-time comparison).",zh:"新增路径遍历检测(复用污点引擎)与鉴权逻辑弱点检测(非常量时间比较识别)。"},
+  cl_v35:{en:"Added network service identification (WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi) with its own tab and dashboard cards.",zh:"新增网络服务识别(WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi)，独立标签页 + 仪表盘展示。"},
+
+  resp1_h:{en:"⚠ Authorized Use Statement",zh:"⚠ 授权使用声明"},
+  resp1_d:{en:"Only analyze firmware you own or have written authorization to assess. This is a defensive security research tool and assumes no liability for misuse.",zh:"仅可分析你拥有或已获得书面授权评估的固件。这是一套防御性安全研究工具，不承担因滥用造成的任何后果。"},
+  resp2_h:{en:"On Accuracy",zh:"关于准确性"},
+  resp2_d:{en:"Decompilation-free static analysis is inherently heuristic. Every finding carries a confidence score — precise call-site detections (0.8) rank above import-presence (0.4) and call-graph taint reachability (0.5). Taint findings are candidate paths for analyst validation, not proven exploits.",
+           zh:"不做反编译的静态分析本质是启发式的。每条发现都带置信度分数——精确调用点(0.8)优先于导入存在性(0.4)与调用图污点可达性(0.5)。污点类发现是“待人工验证的候选路径”，不是“已证实的可利用漏洞”。"},
+
+  cred_eyebrow:{en:"Acknowledgements",zh:"致谢"}, cred_title:{en:"Standing on the shoulders of giants",zh:"站在巨人的肩膀上"},
+  cred_emba:{en:'The open-source IoT firmware analyzer whose approach to CVE correlation and sensitive-data hunting shaped several design decisions here; its <span class="mono">config/</span> signature files also inspired this project\'s sensitive-string dictionary.',
+             zh:'开源 IoT 固件分析器，其 CVE 关联与敏感信息挖掘思路影响了本项目多处设计决策；<span class="mono">config/</span> 签名文件也启发了本项目的敏感字符串字典。'},
+  cred_link:{en:"→ github.com/e-m-b-a/emba",zh:"→ github.com/e-m-b-a/emba"},
+  cred_cbt:{en:"An OpenSSF project, and the actual engine behind FR-VUL-1's broad CVE coverage — the same tool EMBA itself wraps for CVE correlation.",zh:"OpenSSF 项目，FR-VUL-1 广谱 CVE 覆盖背后的实际引擎——EMBA 自己也在用它做 CVE 关联。"},
+  cred_link2:{en:"→ github.com/intel/cve-bin-tool",zh:"→ github.com/intel/cve-bin-tool"},
+
+  foot_tag:{en:"Automated IoT firmware reverse engineering and vulnerability discovery. Open source, self-hosted, works offline.",zh:"自动化 IoT 固件逆向与漏洞发现。开源、自托管、可离线运行。"},
+  foot_docs:{en:"Docs",zh:"文档"}, foot_progress:{en:"Dev Progress (Chinese)",zh:"开发进度(中文)"}, foot_env:{en:"Environment Setup",zh:"环境搭建"},
+  foot_project:{en:"Project",zh:"项目"}, foot_issues:{en:"Report an Issue",zh:"提交 Issue"}, foot_reqs:{en:"Requirements Doc",zh:"需求文档"},
+  foot_oss:{en:"Open source, contributions welcome.",zh:"开源项目，欢迎贡献。"},
+  foot_disclaimer:{en:"Defensive / authorized security research use only.",zh:"仅限防御性 / 授权安全研究用途。"},
+};
+
+(function(){
+  const root = document.documentElement;
+  const themeBtn = document.getElementById("themeBtn");
+  const moonIcon = document.getElementById("themeIconMoon");
+  const sunIcon = document.getElementById("themeIconSun");
+  function applyTheme(t){
+    document.body.setAttribute("data-theme", t);
+    moonIcon.style.display = t === "light" ? "none" : "block";
+    sunIcon.style.display = t === "light" ? "block" : "none";
+  }
+  let theme = localStorage.getItem("ifda-site-theme");
+  if (!theme) theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "midnight";
+  applyTheme(theme);
+  themeBtn.addEventListener("click", () => {
+    theme = theme === "light" ? "midnight" : "light";
+    localStorage.setItem("ifda-site-theme", theme);
+    applyTheme(theme);
+  });
+
+  const langBtn = document.getElementById("langBtn");
+  const langLabel = document.getElementById("langLabel");
+  function applyLang(lang){
+    document.documentElement.lang = lang === "zh" ? "zh" : "en";
+    langLabel.textContent = lang === "zh" ? "EN" : "中";
+    document.querySelectorAll("[data-i18n]").forEach(el => {
+      const entry = I18N[el.getAttribute("data-i18n")];
+      if (entry) el.innerHTML = entry[lang] || entry.en;
+    });
+  }
+  let lang = localStorage.getItem("ifda-site-lang") || "zh";
+  applyLang(lang);
+  langBtn.addEventListener("click", () => {
+    lang = lang === "zh" ? "en" : "zh";
+    localStorage.setItem("ifda-site-lang", lang);
+    applyLang(lang);
+  });
+
+  document.querySelectorAll(".cat-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".cat-tab").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".cat-panel").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelector(`.cat-panel[data-cat="${btn.dataset.cat}"]`).classList.add("active");
+    });
+  });
+
+  // Mobile nav: the .navlinks row is hidden below 920px (see CSS) in favor
+  // of this burger-triggered dropdown, since a phone-width viewport has no
+  // room for six inline nav links.
+  const burgerBtn = document.getElementById("navBurgerBtn");
+  const mobileMenu = document.getElementById("mobileMenu");
+  const burgerOpenIcon = document.getElementById("burgerIconOpen");
+  const burgerCloseIcon = document.getElementById("burgerIconClose");
+  function setMobileMenu(open) {
+    mobileMenu.classList.toggle("open", open);
+    burgerBtn.setAttribute("aria-expanded", String(open));
+    burgerOpenIcon.style.display = open ? "none" : "block";
+    burgerCloseIcon.style.display = open ? "block" : "none";
+  }
+  burgerBtn.addEventListener("click", () => setMobileMenu(!mobileMenu.classList.contains("open")));
+  mobileMenu.querySelectorAll("a").forEach(a => a.addEventListener("click", () => setMobileMenu(false)));
+  // Resizing past the breakpoint (e.g. rotating a tablet to landscape, or a
+  // desktop window being resized) must not leave a stale open dropdown
+  // sitting under a now-restored inline nav row.
+  window.addEventListener("resize", () => { if (window.innerWidth > 920) setMobileMenu(false); });
+})();
+</script>
+</body>
+</html>

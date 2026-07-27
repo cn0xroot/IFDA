@@ -484,3 +484,272 @@ func TestExportFullDoesNotTruncateLargeReports(t *testing.T) {
 		t.Errorf("ExportFull files = %d, want %d", len(doc.Files), nFiles)
 	}
 }
+
+// AI provider profiles round-trip through the encrypted-key columns, and
+// ListProviders never surfaces api_key_enc (only GetProvider, used
+// internally by the analysis handler, does).
+func TestAIProviderCRUD(t *testing.T) {
+	db, err := NewReportDB(filepath.Join(t.TempDir(), "reports.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, aiKeySize)
+	enc, err := encryptSecret(key, "sk-original-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := "2026-01-01T00:00:00Z"
+	p := AIProvider{ID: "ai-1", Name: "Test Gateway", Host: "https://gw.example.com", APIKeyEnc: enc,
+		KeyLast4: keyLast4("sk-original-secret"), Model: "gpt-test", MaxTokens: 4096, CreatedAt: now, UpdatedAt: now}
+	if err := db.CreateProvider(p); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := db.ListProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != "Test Gateway" {
+		t.Fatalf("ListProviders = %+v", list)
+	}
+
+	got, err := db.GetProvider("ai-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("GetProvider returned nil for an existing id")
+	}
+	if got.MaxTokens != 4096 {
+		t.Errorf("MaxTokens = %d, want 4096", got.MaxTokens)
+	}
+	plain, err := decryptSecret(key, got.APIKeyEnc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain != "sk-original-secret" {
+		t.Errorf("decrypted key = %q, want sk-original-secret", plain)
+	}
+	if got.KeyLast4 != "cret" {
+		t.Errorf("KeyLast4 = %q, want %q", got.KeyLast4, "cret")
+	}
+
+	// Update without touching the key (nil pointers) must leave it decryptable
+	// to the same original plaintext -- this is the "leave the key field
+	// blank to keep it unchanged" contract the edit form relies on.
+	if err := db.UpdateProvider("ai-1", "Renamed", "https://gw2.example.com", "gpt-test-2", "anthropic", 16384, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.GetProvider("ai-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "Renamed" || got.Host != "https://gw2.example.com" || got.Model != "gpt-test-2" {
+		t.Errorf("after UpdateProvider (no key change) = %+v", got)
+	}
+	if got.Kind != "anthropic" {
+		t.Errorf("Kind = %q, want anthropic", got.Kind)
+	}
+	if got.MaxTokens != 16384 {
+		t.Errorf("MaxTokens = %d, want 16384", got.MaxTokens)
+	}
+	plain, err = decryptSecret(key, got.APIKeyEnc)
+	if err != nil || plain != "sk-original-secret" {
+		t.Errorf("key must survive a no-key-change update, got plain=%q err=%v", plain, err)
+	}
+
+	// Update with a new key must replace both api_key_enc and key_last4.
+	newEnc, _ := encryptSecret(key, "sk-rotated-key")
+	newLast4 := keyLast4("sk-rotated-key")
+	if err := db.UpdateProvider("ai-1", "Renamed", "https://gw2.example.com", "gpt-test-2", "openai", 16384, &newEnc, &newLast4); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.GetProvider("ai-1")
+	if got.KeyLast4 != "-key" {
+		t.Errorf("KeyLast4 after rotation = %q, want -key", got.KeyLast4)
+	}
+	if got.Kind != "openai" {
+		t.Errorf("Kind after second update = %q, want openai", got.Kind)
+	}
+	plain, _ = decryptSecret(key, got.APIKeyEnc)
+	if plain != "sk-rotated-key" {
+		t.Errorf("decrypted key after rotation = %q, want sk-rotated-key", plain)
+	}
+
+	if err := db.DeleteProvider("ai-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := db.GetProvider("ai-1"); err != nil || got != nil {
+		t.Errorf("GetProvider after delete = %+v, err=%v, want nil, nil", got, err)
+	}
+}
+
+// The AI analysis cache goes running -> done (or running -> error), and
+// GetAnalysis on a job that was never analyzed returns (nil, nil) rather
+// than an error, mirroring GetSummary's "not ingested yet" convention.
+// Regression: a streaming analysis is driven entirely by one in-flight
+// HTTP request, so if the service dies mid-stream nothing remains to move
+// that row off 'running' -- leaving the UI spinning on that job forever.
+// Reopening the database (i.e. the next process start) must close such
+// rows out, while preserving whatever partial content had been persisted.
+func TestReopeningDBReconcilesInterruptedAnalyses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reports.db")
+	db, err := NewReportDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertAnalysisRunning("job-1", "ai-1", "Gateway", "gpt-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateAnalysisContent("job-1", "half an analysis"); err != nil {
+		t.Fatal(err)
+	}
+	// A completed run from before must not be disturbed by reconciliation.
+	if err := db.UpsertAnalysisRunning("job-2", "ai-1", "Gateway", "gpt-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CompleteAnalysis("job-2", "a finished analysis", nil); err != nil {
+		t.Fatal(err)
+	}
+	db.db.Close() // simulate the process going away mid-stream
+
+	reopened, err := NewReportDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reopened.GetAnalysis("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "error" {
+		t.Errorf("interrupted run status = %q, want error (a 'running' row can never be resumed by a new process)", got.Status)
+	}
+	if got.Content != "half an analysis" {
+		t.Errorf("content = %q, want the partial content preserved", got.Content)
+	}
+	if got.Error == "" {
+		t.Error("interrupted run must carry an explanatory error message")
+	}
+	if got.FinishedAt == "" {
+		t.Error("interrupted run must be given a finished_at timestamp")
+	}
+
+	done, err := reopened.GetAnalysis("job-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != "done" || done.Content != "a finished analysis" {
+		t.Errorf("an already-completed analysis must be left alone, got %+v", done)
+	}
+}
+
+func TestAIAnalysisCache(t *testing.T) {
+	db, err := NewReportDB(filepath.Join(t.TempDir(), "reports.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := db.GetAnalysis("job-never-analyzed"); err != nil || got != nil {
+		t.Fatalf("GetAnalysis for a never-analyzed job = %+v, err=%v, want nil, nil", got, err)
+	}
+
+	if err := db.UpsertAnalysisRunning("job-1", "ai-1", "Test Gateway", "gpt-test"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetAnalysis("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Status != "running" {
+		t.Fatalf("after UpsertAnalysisRunning, GetAnalysis = %+v", got)
+	}
+
+	if err := db.CompleteAnalysis("job-1", "the analysis text", json.RawMessage(`{"finding_count_sent":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.GetAnalysis("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "done" || got.Content != "the analysis text" {
+		t.Errorf("after CompleteAnalysis, GetAnalysis = %+v", got)
+	}
+
+	// Re-running (a fresh UpsertAnalysisRunning) must clear the prior
+	// content/error -- a page load mid-run shouldn't show a stale result.
+	if err := db.UpsertAnalysisRunning("job-1", "ai-1", "Test Gateway", "gpt-test"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.GetAnalysis("job-1")
+	if got.Status != "running" || got.Content != "" {
+		t.Errorf("re-running must clear prior content, got %+v", got)
+	}
+
+	// UpdateAnalysisContent (the streaming partial-persist path) must update
+	// only content, leaving status/error untouched.
+	if err := db.UpdateAnalysisContent("job-1", "partial text so far"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.GetAnalysis("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "running" || got.Content != "partial text so far" {
+		t.Errorf("after UpdateAnalysisContent, GetAnalysis = %+v", got)
+	}
+
+	// FailAnalysis must preserve whatever content had already streamed in
+	// before the failure, not discard it.
+	if err := db.FailAnalysis("job-1", "partial text so far", "provider unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.GetAnalysis("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "error" || got.Error != "provider unreachable" || got.Content != "partial text so far" {
+		t.Errorf("after FailAnalysis, GetAnalysis = %+v", got)
+	}
+}
+
+// Deleting a provider must not delete cached analyses it produced -- the
+// analysis text is still meaningful to show even once its provider config
+// is gone -- but provider_id must be nulled out since re-running with it is
+// no longer possible.
+func TestDeleteProviderNullsAnalysisReference(t *testing.T) {
+	db, err := NewReportDB(filepath.Join(t.TempDir(), "reports.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, aiKeySize)
+	enc, _ := encryptSecret(key, "sk-x")
+	if err := db.CreateProvider(AIProvider{ID: "ai-1", Name: "Gateway", Host: "https://gw.example.com",
+		APIKeyEnc: enc, KeyLast4: "sk-x", Model: "gpt-test", CreatedAt: "now", UpdatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertAnalysisRunning("job-1", "ai-1", "Gateway", "gpt-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CompleteAnalysis("job-1", "some analysis", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.DeleteProvider("ai-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := db.GetAnalysis("job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("cached analysis must survive its provider being deleted")
+	}
+	if got.ProviderID != nil {
+		t.Errorf("ProviderID = %v, want nil after the provider was deleted", *got.ProviderID)
+	}
+	if got.ProviderName != "Gateway" || got.Content != "some analysis" {
+		t.Errorf("provider_name/content snapshot must survive, got %+v", got)
+	}
+}

@@ -79,7 +79,7 @@
   .right { overflow-y:auto; padding:18px 22px; }
 
   input, select, button { font:inherit; }
-  input[type=text], input[type=number], select { background:var(--panel); border:1px solid var(--line);
+  input[type=text], input[type=number], input[type=password], select { background:var(--panel); border:1px solid var(--line);
         color:var(--fg); padding:7px 9px; border-radius:6px; font-size:13px; width:100%; }
   .submit { display:flex; gap:6px; margin-bottom:8px; }
   .submit input { flex:1; }
@@ -126,6 +126,11 @@
   .logrow .lp { color:var(--muted); white-space:nowrap; }
   .bar { height:5px; background:var(--line2); border-radius:4px; margin-top:7px; overflow:hidden; }
   .bar > span { display:block; height:100%; background:var(--accent); transition:width .3s; }
+  /* Indeterminate variant (AI analysis: no real total-length signal exists
+     to compute an honest percentage from, so this is a sliding animation
+     rather than a numeric progress bar). */
+  .bar.indeterminate > span { width:30%; transition:none; animation:barSlide 1.1s ease-in-out infinite; }
+  @keyframes barSlide { 0% { margin-left:-30%; } 100% { margin-left:100%; } }
   .meta { color:var(--muted); font-size:11px; margin-top:5px; display:flex; gap:9px; flex-wrap:wrap; align-items:center; }
   .meta .time-ago { margin-left:auto; white-space:nowrap; }
 
@@ -308,6 +313,30 @@
   .captchaRow { display:flex; gap:8px; align-items:center; }
   .captchaRow img { height:42px; border-radius:8px; border:1px solid var(--line); cursor:pointer; }
   .captchaRow input { flex:1; }
+
+  /* Generic wide settings modal (AI provider management) -- distinct from
+     .loginCard, which is a narrow, decorative, text-centered login form. */
+  .modalCard { position:relative; z-index:1; background:var(--panel); border:1px solid var(--line);
+               border-radius:14px; padding:26px 28px; width:560px; max-width:92vw; max-height:85vh;
+               overflow-y:auto; text-align:left; display:flex; flex-direction:column; gap:6px; }
+  .modalCard h2 { margin:0; font-size:18px; }
+  .modalCard .tag { margin:0 0 10px; font-size:12px; color:var(--muted); }
+  .aiProviderRow { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+  .aiProviderRow:last-child { border-bottom:0; }
+  .aiProviderRow .aiProviderMeta { flex:1; min-width:0; }
+  .aiProviderRow .name { font-weight:600; font-size:13px; }
+  .aiProviderRow .sub { font-size:11px; color:var(--muted); font-family:ui-monospace,Menlo,monospace;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .aiForm { display:flex; flex-direction:column; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+  .aiForm .row { display:flex; gap:8px; }
+  /* Activity log for the model's tool calls -- deliberately quiet, it's
+     process detail, not the analysis itself. */
+  .aiToolLog { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               padding:9px 11px; margin:0 0 12px; font-size:11.5px; }
+  .aiToolLog .hd { color:var(--muted); text-transform:uppercase; letter-spacing:.05em;
+                   font-size:10px; font-weight:700; margin-bottom:5px; }
+  .aiToolLog .row { display:flex; gap:8px; color:var(--soft); padding:1px 0; }
+  .aiToolLog .row .nm { color:var(--accent-h); flex:none; }
 </style>
 </head>
 <body x-data="app()" x-init="init()">
@@ -369,6 +398,69 @@
     <p class="sev-low" x-show="changePasswordOk" x-text="t('change_password_ok')"></p>
   </form>
 </div>
+<!-- AI SETTINGS -->
+<div class="loginOverlay" x-show="showAISettings" style="display:none" @click.self="closeAISettings()">
+  <div class="modalCard">
+    <button type="button" class="modalClose" @click="closeAISettings()" title="Close">×</button>
+    <h2 x-text="t('ai_settings_title')"></h2>
+    <p class="tag" x-text="t('ai_settings_hint')"></p>
+
+    <template x-if="!aiProviders.length">
+      <div class="empty" x-text="t('ai_no_providers')"></div>
+    </template>
+    <template x-for="p in aiProviders" :key="p.id">
+      <div class="aiProviderRow">
+        <div class="aiProviderMeta">
+          <div class="name">
+            <span x-text="p.name"></span>
+            <span class="fr mono" style="margin-left:6px" x-text="p.kind==='anthropic' ? 'Anthropic' : 'OpenAI'"></span>
+          </div>
+          <div class="sub" x-text="p.host + ' · ' + p.model + ' · max_tokens=' + p.max_tokens + ' · ***' + p.key_last4"></div>
+          <div class="sub" x-show="aiTestResults[p.id]" :class="aiTestResults[p.id] && aiTestResults[p.id].ok ? 'sev-low' : 'sev-crit'"
+               x-text="aiTestResults[p.id] && aiTestResults[p.id].text"></div>
+        </div>
+        <button class="ghost sm" @click="testAIProvider(p)" :disabled="aiTesting[p.id]"
+                x-text="aiTesting[p.id] ? t('ai_testing') : t('btn_ai_test')"></button>
+        <button class="ghost sm" @click="editAIProvider(p)" x-text="t('btn_edit')"></button>
+        <button class="ghost sm" @click="deleteAIProvider(p)" x-text="t('btn_delete')"></button>
+      </div>
+    </template>
+
+    <template x-if="!aiFormOpen">
+      <button class="ghost sm" style="margin-top:12px" @click="newAIProvider()" x-text="t('btn_ai_add')"></button>
+    </template>
+
+    <div class="aiForm" x-show="aiFormOpen">
+      <input type="text" x-model="aiForm.name" :placeholder="t('ai_form_name')">
+      <select x-model="aiForm.kind">
+        <option value="openai" x-text="t('ai_kind_openai')"></option>
+        <option value="anthropic" x-text="t('ai_kind_anthropic')"></option>
+      </select>
+      <input type="text" x-model="aiForm.host" :placeholder="aiForm.kind==='anthropic' ? t('ai_form_host_anthropic') : t('ai_form_host')">
+      <p class="meta" style="margin:0" x-text="aiForm.kind==='anthropic' ? t('ai_kind_anthropic_hint') : t('ai_kind_openai_hint')"></p>
+      <input type="password" x-model="aiForm.api_key" :placeholder="aiForm.id ? t('ai_form_key_keep') : t('ai_form_key')" autocomplete="off">
+      <div class="row">
+        <select x-model="aiForm.model" style="flex:1">
+          <option value="" x-text="t('ai_form_model_placeholder')"></option>
+          <template x-for="m in aiFormModels" :key="m">
+            <option :value="m" x-text="m"></option>
+          </template>
+        </select>
+        <button class="ghost sm" @click="fetchAIModelsForForm()" :disabled="aiFormFetching || !aiForm.host || (!aiForm.api_key && !aiForm.id)"
+                x-text="aiFormFetching ? t('ai_fetching') : t('btn_ai_fetch_models')"></button>
+      </div>
+      <div class="row" style="align-items:center">
+        <input type="number" x-model.number="aiForm.max_tokens" min="256" max="65536" step="256" style="flex:1" :placeholder="t('ai_form_max_tokens')">
+        <span class="meta" style="margin:0;white-space:nowrap" x-text="t('ai_form_max_tokens_hint')"></span>
+      </div>
+      <p class="sev-crit" x-show="aiFormError" x-text="aiFormError"></p>
+      <div class="row">
+        <button @click="saveAIProvider()" :disabled="!aiForm.name || !aiForm.host || !aiForm.model" x-text="t('btn_save')"></button>
+        <button class="ghost" @click="closeAIForm()" x-text="t('btn_cancel')"></button>
+      </div>
+    </div>
+  </div>
+</div>
 <header>
   <h1>IFDA</h1>
   <span class="tag" x-text="t('tagline')"></span>
@@ -379,6 +471,7 @@
   <button class="ghost sm" :class="{active: compareMode}" @click="toggleCompare()" x-text="t('btn_compare')"></button>
   <button class="ghost sm" :class="{active: showVulnDB}" @click="toggleVulnDB()" x-text="t('btn_vulndb')"></button>
   <button class="ghost sm" :class="{active: showSensitiveDict}" @click="toggleSensitiveDict()" x-text="t('btn_sensitive_dict')"></button>
+  <button class="ghost sm" :class="{active: showAISettings}" @click="openAISettings()" x-text="t('btn_ai_settings')"></button>
   <div class="usermenu" x-show="loginRequired && authToken" x-data="{}" @click.outside="showUserMenu=false">
     <button class="ghost sm usermenu-btn" :class="{active: showUserMenu}" @click="showUserMenu=!showUserMenu">
       <span class="usericon">👤</span><span x-text="username||t('user_center')"></span>
@@ -477,6 +570,7 @@
         </div>
         <div class="jobctl" x-show="['completed','failed','cancelled'].includes(j.status)" @click.stop>
           <button class="ghost sm" @click="deleteJob(j.id)" x-text="t('btn_delete')"></button>
+          <button class="ghost sm" x-show="j.status==='completed'" @click="openAIAnalysisForJob(j.id)" x-text="t('tab_ai')"></button>
         </div>
       </div>
     </template>
@@ -811,6 +905,7 @@
                   x-text="`${t('tab_busybox')} (${extraCommands.length})`"></button>
           <button :class="{active:tab==='services'}" @click="tab='services'"
                   x-text="`${t('tab_services')} (${services.length})`"></button>
+          <button :class="{active:tab==='ai'}" @click="tab='ai'; loadAIAnalysis()" x-text="t('tab_ai')"></button>
           <span class="spacer"></span>
           <div class="exp">
             <a :href="exportURL('json')"><button class="ghost sm" x-text="t('export_json')"></button></a>
@@ -1419,6 +1514,54 @@
             </table>
           </div>
         </div>
+
+        <!-- AI ANALYSIS -->
+        <div x-show="tab==='ai'">
+          <h3 style="margin-top:0" x-text="t('tab_ai')"></h3>
+          <p class="meta" x-text="t('ai_tab_hint')"></p>
+          <template x-if="!aiProviders.length">
+            <div class="empty">
+              <span x-text="t('ai_none_configured')"></span>
+              <button class="ghost sm" style="margin-left:8px" @click="openAISettings()" x-text="t('btn_ai_settings')"></button>
+            </div>
+          </template>
+          <div class="filters" x-show="aiProviders.length">
+            <select x-model="aiSelectedProviderId" style="max-width:280px">
+              <template x-for="p in aiProviders" :key="p.id">
+                <option :value="p.id" x-text="p.name + ' (' + p.model + ')'"></option>
+              </template>
+            </select>
+            <button @click="runAIAnalysis()" :disabled="aiRunning || !aiSelectedProviderId"
+                    x-text="aiRunning ? t('ai_running') : t('btn_ai_run')"></button>
+          </div>
+          <p class="sev-crit" x-show="aiError" x-text="aiError"></p>
+          <template x-if="aiAnalysis && aiAnalysis.status && aiAnalysis.status !== 'none'">
+            <div>
+              <p class="meta">
+                <span x-text="t('ai_result_from') + ': ' + aiAnalysis.provider_name + ' (' + aiAnalysis.model + ')'"></span>
+                <span x-show="aiPromptMetaText" x-text="aiPromptMetaText"></span>
+              </p>
+              <template x-if="aiAnalysis.status === 'running' && !aiStreaming">
+                <div>
+                  <div class="bar indeterminate"><span></span></div>
+                  <p class="meta" x-text="t('ai_running')"></p>
+                </div>
+              </template>
+              <div class="aiToolLog" x-show="aiToolActivity.length">
+                <div class="hd" x-text="t('ai_tool_activity')"></div>
+                <template x-for="(t, i) in aiToolActivity" :key="i">
+                  <div class="row"><span class="mono nm" x-text="t.name"></span><span x-text="t.detail"></span></div>
+                </template>
+              </div>
+              <template x-if="aiAnalysis.status === 'error'">
+                <p class="sev-crit" x-text="aiAnalysis.error"></p>
+              </template>
+              <template x-if="aiAnalysis.content">
+                <pre class="code" style="max-height:60vh; white-space:pre-wrap" x-text="aiAnalysis.content"></pre>
+              </template>
+            </div>
+          </template>
+        </div>
       </div>
     </template>
   </div>
@@ -1565,6 +1708,44 @@ const I18N = {
   services_port_src_inetd: { en: "inetd.conf",                        zh: "inetd.conf" },
   services_port_src_initd_flag: { en: "init.d flag",                  zh: "init.d 启动参数" },
   services_port_src_default: { en: "well-known default",              zh: "已知默认端口" },
+  tab_ai:                { en: "AI Analysis",                          zh: "AI分析" },
+  ai_tab_hint:           { en: "AI-assisted triage over this job's findings — pick a configured provider and run an on-demand analysis. The AI only ever reads findings already computed by the scan; it does not re-scan the firmware.",
+                           zh: "基于本次扫描结果的 AI 辅助分析——选择一个已配置的 AI 服务商，按需触发分析。AI 只读取扫描已产出的 findings，不会重新扫描固件。" },
+  ai_none_configured:   { en: "No AI provider configured yet.",        zh: "尚未配置任何 AI 服务商。" },
+  btn_ai_run:           { en: "Run AI analysis",                       zh: "运行AI分析" },
+  ai_running:           { en: "Analyzing… this can take up to two minutes.", zh: "分析中…最长可能需要两分钟。" },
+  ai_result_from:       { en: "Result from",                           zh: "分析来源" },
+  ai_covered:           { en: "covered",                               zh: "已覆盖" },
+  btn_ai_settings:      { en: "AI settings",                           zh: "AI设置" },
+  ai_settings_title:    { en: "AI providers",                          zh: "AI 服务商配置" },
+  ai_settings_hint:     { en: "Register one or more OpenAI-compatible endpoints (self-hosted gateways like one-api/newapi/vLLM/Ollama, or a vendor API) to use for AI-assisted analysis of scan results.",
+                           zh: "添加一个或多个 OpenAI 兼容接口(自建网关如 one-api/newapi/vLLM/Ollama，或云端服务商 API)，用于对扫描结果做 AI 辅助分析。" },
+  ai_no_providers:      { en: "No providers saved yet — add one below.", zh: "尚未保存任何配置——请在下方添加。" },
+  btn_ai_add:           { en: "+ Add provider",                        zh: "+ 新增配置" },
+  ai_form_name:         { en: "Display name (e.g. \"Self-hosted gateway\")", zh: "名称(如\"自建网关\")" },
+  ai_kind_openai:       { en: "OpenAI-compatible",                       zh: "OpenAI 兼容" },
+  ai_kind_anthropic:    { en: "Anthropic (Claude)",                      zh: "Anthropic (Claude)" },
+  ai_kind_openai_hint:  { en: "Bearer-token auth, /chat/completions -- works with OpenAI, DeepSeek, and self-hosted gateways (one-api/newapi/vLLM/Ollama).",
+                          zh: "Bearer token 鉴权，/chat/completions 接口——适用于 OpenAI、DeepSeek 及自建网关(one-api/newapi/vLLM/Ollama)。" },
+  ai_kind_anthropic_hint: { en: "x-api-key auth, /messages -- for Anthropic's own API. Host should include the version path, e.g. https://api.anthropic.com/v1.",
+                            zh: "x-api-key 鉴权，/messages 接口——用于 Anthropic 官方 API。Host 需带上版本路径，如 https://api.anthropic.com/v1。" },
+  ai_form_host:         { en: "Host URL (e.g. https://gw.example.com/v1)", zh: "Host URL(如 https://gw.example.com/v1)" },
+  ai_form_host_anthropic: { en: "Host URL (e.g. https://api.anthropic.com/v1)", zh: "Host URL(如 https://api.anthropic.com/v1)" },
+  ai_form_key:          { en: "API Key",                                zh: "API Key" },
+  ai_form_key_keep:     { en: "API Key (leave blank to keep current)",  zh: "API Key(留空则保留原有)" },
+  ai_form_model_placeholder: { en: "Fetch models to choose one…",       zh: "点击右侧按钮拉取模型…" },
+  btn_ai_fetch_models:  { en: "Fetch models",                           zh: "获取模型" },
+  ai_fetching:          { en: "Fetching…",                              zh: "获取中…" },
+  ai_confirm_delete:    { en: "Delete AI provider",                     zh: "确定删除 AI 配置" },
+  ai_form_max_tokens:   { en: "Max output tokens (default 8192)",       zh: "最大输出长度 max_tokens(默认 8192)" },
+  ai_form_max_tokens_hint: { en: "Too low truncates long analyses mid-sentence.", zh: "设置过低会导致长回复被从中间截断。" },
+  btn_ai_test:          { en: "Test connection",                        zh: "测试连接" },
+  ai_testing:           { en: "Testing…",                                zh: "测试中…" },
+  ai_test_ok:           { en: "Connected, models available",             zh: "连接成功，可用模型数" },
+  ai_tool_activity:     { en: "Data the AI pulled",                      zh: "AI 主动查询的数据" },
+  btn_edit:             { en: "Edit",                                   zh: "编辑" },
+  btn_save:             { en: "Save",                                   zh: "保存" },
+  btn_cancel:           { en: "Cancel",                                 zh: "取消" },
   th_findings:          { en: "Findings",                             zh: "发现数" },
   no_scripts:           { en: "No shell/PHP/Python/Lua scripts found in this target.",
                            zh: "该目标中没有找到 shell/PHP/Python/Lua 脚本。" },
@@ -1789,6 +1970,11 @@ function app() {
     compareMode: false, compareA: "", compareB: "", compareResult: null, comparing: false, compareProgress: 0,
     showVulnDB: true, vulnDB: null, vulnDBLoading: false, vulnDBCheckerFilter: "",
     showSensitiveDict: false,
+    showAISettings: false,
+    aiProviders: [], aiSelectedProviderId: "", aiAnalysis: null, aiRunning: false, aiStreaming: false, aiError: "",
+    aiFormOpen: false, aiForm: { id: "", name: "", host: "", api_key: "", model: "", kind: "openai", max_tokens: 8192 },
+    aiFormModels: [], aiFormFetching: false, aiFormError: "",
+    aiTesting: {}, aiTestResults: {}, aiPollTimer: null, aiToolActivity: [],
     triageHistoryCache: {},
     reportLoadError: "", reportLoading: false, reportLoadProgress: 0,
     f: { sev:{critical:true,high:true,medium:true,low:true,info:true},
@@ -1947,6 +2133,7 @@ function app() {
     },
     select(id) {
       this.compareMode = false; this.showVulnDB = false; this.showSensitiveDict = false;
+      this.stopAIPolling(); // whatever we were watching, it isn't this job
       this.selectedId = id; this.summary = null; this.tab = "dashboard";
       if (this.sse) { this.sse.close(); this.sse = null; }
       const job = this.jobs.find(x => x.id === id);
@@ -2471,6 +2658,224 @@ function app() {
       this.showSensitiveDict = !this.showSensitiveDict;
       if (!this.showSensitiveDict) return;
       this.closeSSE(); this.compareMode = false; this.showVulnDB = false;
+    },
+    // AI provider config (global, not per-job) + on-demand AI analysis of a
+    // completed job's findings. See service/ai.go for the server side.
+    async loadAIProviders() {
+      try {
+        const r = await this.apiFetch("/api/ai/providers");
+        this.aiProviders = r.ok ? await r.json() : [];
+        if (!this.aiSelectedProviderId && this.aiProviders.length) this.aiSelectedProviderId = this.aiProviders[0].id;
+      } catch (e) { this.aiProviders = []; }
+    },
+    openAISettings() {
+      this.showAISettings = true;
+      this.closeAIForm();
+      this.loadAIProviders();
+    },
+    closeAISettings() { this.showAISettings = false; this.closeAIForm(); },
+    newAIProvider() {
+      this.aiForm = { id: "", name: "", host: "", api_key: "", model: "", kind: "openai", max_tokens: 8192 };
+      this.aiFormModels = []; this.aiFormError = ""; this.aiFormOpen = true;
+    },
+    editAIProvider(p) {
+      this.aiForm = { id: p.id, name: p.name, host: p.host, api_key: "", model: p.model, kind: p.kind || "openai",
+        max_tokens: p.max_tokens || 8192 };
+      this.aiFormModels = [p.model]; this.aiFormError = ""; this.aiFormOpen = true;
+    },
+    closeAIForm() { this.aiFormOpen = false; this.aiFormError = ""; },
+    // Populates the model dropdown by calling the provider's /models endpoint
+    // -- the whole point being the user never hand-types a model id. Saving
+    // is blocked (via the Save button's :disabled) until this has produced a
+    // non-empty aiForm.model at least once.
+    async fetchAIModelsForForm() {
+      this.aiFormError = ""; this.aiFormFetching = true;
+      try {
+        const body = { host: this.aiForm.host, api_key: this.aiForm.api_key, kind: this.aiForm.kind };
+        if (this.aiForm.id) body.provider_id = this.aiForm.id;
+        const r = await this.apiFetch("/api/ai/models", {method:"POST",
+          headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+        const j = await r.json();
+        if (!r.ok) { this.aiFormError = j.error || "failed"; this.aiFormModels = []; return; }
+        this.aiFormModels = j.models || [];
+        if (this.aiFormModels.length && !this.aiFormModels.includes(this.aiForm.model)) this.aiForm.model = this.aiFormModels[0];
+      } catch (e) { this.aiFormError = String(e); this.aiFormModels = []; }
+      finally { this.aiFormFetching = false; }
+    },
+    async saveAIProvider() {
+      this.aiFormError = "";
+      const isEdit = !!this.aiForm.id;
+      const url = isEdit ? `/api/ai/providers/${this.aiForm.id}` : "/api/ai/providers";
+      const r = await this.apiFetch(url, {method: isEdit ? "PUT" : "POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({name:this.aiForm.name, host:this.aiForm.host, api_key:this.aiForm.api_key, model:this.aiForm.model,
+          kind:this.aiForm.kind, max_tokens:this.aiForm.max_tokens})});
+      const j = await r.json();
+      if (!r.ok) { this.aiFormError = j.error || "save failed"; return; }
+      this.closeAIForm();
+      await this.loadAIProviders();
+    },
+    // Connectivity test for an already-saved provider: reuses the same
+    // /api/ai/models call the add/edit form's "fetch models" button makes
+    // (a real round trip validating host + auth + reachability), without
+    // spending any completion tokens the way a full analysis call would.
+    async testAIProvider(p) {
+      this.aiTesting[p.id] = true;
+      this.aiTestResults[p.id] = null;
+      try {
+        const r = await this.apiFetch("/api/ai/models", {method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({provider_id: p.id})});
+        const j = await r.json();
+        if (!r.ok) {
+          this.aiTestResults[p.id] = { ok: false, text: j.error || "failed" };
+        } else {
+          this.aiTestResults[p.id] = { ok: true, text: `${this.t('ai_test_ok')} (${(j.models||[]).length})` };
+        }
+      } catch (e) {
+        this.aiTestResults[p.id] = { ok: false, text: String(e) };
+      } finally {
+        this.aiTesting[p.id] = false;
+      }
+    },
+    async deleteAIProvider(p) {
+      if (!confirm(`${this.t('ai_confirm_delete')} "${p.name}"?`)) return;
+      const r = await this.apiFetch(`/api/ai/providers/${p.id}`, {method:"DELETE"});
+      if (r.ok) {
+        if (this.aiSelectedProviderId === p.id) this.aiSelectedProviderId = "";
+        delete this.aiTestResults[p.id]; delete this.aiTesting[p.id];
+        await this.loadAIProviders();
+      }
+    },
+    async loadAIAnalysis() {
+      if (!this.aiProviders.length) await this.loadAIProviders();
+      if (!this.selectedId) return;
+      this.aiError = ""; this.aiStreaming = false; // this load isn't itself a live stream -- see runAIAnalysis
+      try {
+        const r = await this.apiFetch(`/api/jobs/${this.selectedId}/ai-analysis`);
+        this.aiAnalysis = r.ok ? await r.json() : null;
+      } catch (e) { this.aiAnalysis = null; }
+      this.syncAIPolling();
+    },
+    // A streaming run only pushes deltas to the tab that started it. Any
+    // other viewer of the same job (another tab, a reload, or arriving via
+    // the job-list AI button) just gets a one-shot GET -- which, mid-run,
+    // is a 'running' row that would otherwise sit there frozen forever.
+    // Polling picks up the partial content runAIAnalysis persists every
+    // ~500ms, and notices completion. Only runs when this tab is a
+    // passive observer: aiRunning means this tab owns the live stream and
+    // is already getting deltas directly, so polling would be redundant.
+    syncAIPolling() {
+      const shouldPoll = !this.aiRunning && this.tab === "ai" &&
+        this.aiAnalysis && this.aiAnalysis.status === "running";
+      if (!shouldPoll) { this.stopAIPolling(); return; }
+      if (this.aiPollTimer) return; // already polling
+      const jobId = this.selectedId;
+      this.aiPollTimer = setInterval(async () => {
+        // Bail out if the user moved on, or this tab became the owner of a
+        // freshly-started run, since either makes this poll's writes stale.
+        if (this.selectedId !== jobId || this.aiRunning || this.tab !== "ai") { this.stopAIPolling(); return; }
+        try {
+          const r = await this.apiFetch(`/api/jobs/${jobId}/ai-analysis`);
+          if (!r.ok) { this.stopAIPolling(); return; }
+          const j = await r.json();
+          if (this.selectedId !== jobId || this.aiRunning) { this.stopAIPolling(); return; }
+          this.aiAnalysis = j;
+          if (j.status !== "running") this.stopAIPolling();
+        } catch (e) { this.stopAIPolling(); }
+      }, 1500);
+    },
+    stopAIPolling() {
+      if (this.aiPollTimer) { clearInterval(this.aiPollTimer); this.aiPollTimer = null; }
+    },
+    // Jumps straight to a job's AI Analysis tab from the job-history list
+    // (the button next to Delete), without the user having to open the
+    // report and click through tabs manually. select() resets tab back to
+    // "dashboard" as a side effect, so it's overridden right after.
+    openAIAnalysisForJob(id) {
+      this.select(id);
+      this.tab = "ai";
+      this.loadAIAnalysis();
+    },
+    // Streams the analysis via a single POST whose response body is
+    // chunked NDJSON (one {"type":...} event per line -- see service/ai.go's
+    // runAIAnalysis): "delta" events append to the growing text as it's
+    // generated, "done" finalizes with prompt_meta, "error" (used when the
+    // provider fails mid-stream, after headers are already committed) shows
+    // the error while keeping whatever content streamed in before it. No
+    // percentage progress is shown while waiting for the first delta --
+    // neither OpenAI's nor Anthropic's streaming APIs report a total length
+    // up front, so an indeterminate animation (not a fabricated number) is
+    // what's shown until real content starts arriving.
+    async runAIAnalysis() {
+      if (!this.aiSelectedProviderId || !this.selectedId) return;
+      const jobId = this.selectedId;
+      const isCurrent = () => this.selectedId === jobId;
+      this.aiRunning = true; this.aiStreaming = false; this.aiError = ""; this.aiToolActivity = [];
+      const providerMeta = this.aiProviders.find(p => p.id === this.aiSelectedProviderId) || {};
+      this.aiAnalysis = { job_id: jobId, status: "running", content: "",
+        provider_name: providerMeta.name || "", model: providerMeta.model || "" };
+      try {
+        const r = await this.apiFetch(`/api/jobs/${jobId}/ai-analysis`, {method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({provider_id: this.aiSelectedProviderId, lang: this.lang})});
+        if (!r.ok || !r.body) {
+          const j = await r.json().catch(() => ({}));
+          const msg = j.error || `HTTP ${r.status}`;
+          if (isCurrent()) { this.aiError = msg; this.aiAnalysis.status = "error"; this.aiAnalysis.error = msg; }
+          return;
+        }
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, {stream: true});
+          let idx;
+          while ((idx = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, idx); buf = buf.slice(idx + 1);
+            if (!line.trim()) continue;
+            let evt;
+            try { evt = JSON.parse(line); } catch (e) { continue; }
+            if (!isCurrent()) continue; // keep draining so the connection closes cleanly, just don't paint over a different job's view
+            if (evt.type === "delta") {
+              this.aiStreaming = true;
+              this.aiAnalysis.content += evt.text;
+            } else if (evt.type === "tool") {
+              // The model is fetching more scan data. Shown as an activity
+              // line so a multi-second tool round doesn't look like a hang.
+              this.aiToolActivity.push({ name: evt.name, detail: evt.detail || "" });
+            } else if (evt.type === "done") {
+              this.aiAnalysis.status = "done";
+              this.aiAnalysis.prompt_meta = evt.prompt_meta;
+            } else if (evt.type === "error") {
+              this.aiAnalysis.status = "error";
+              this.aiAnalysis.error = evt.message;
+              this.aiError = evt.message;
+            }
+          }
+        }
+      } catch (e) {
+        if (isCurrent()) {
+          this.aiError = String(e);
+          if (this.aiAnalysis) { this.aiAnalysis.status = "error"; this.aiAnalysis.error = this.aiError; }
+        }
+      } finally {
+        if (isCurrent()) {
+          this.aiRunning = false;
+          // If the stream ended without ever reaching a terminal event --
+          // e.g. the connection dropped while the server kept generating --
+          // this tab stops being the owner but the run may still be live,
+          // so hand over to polling rather than freezing on 'running'.
+          this.syncAIPolling();
+        }
+      }
+    },
+    get aiPromptMetaText() {
+      const m = this.aiAnalysis && this.aiAnalysis.prompt_meta;
+      if (!m || !m.truncated) return "";
+      return `· ${this.t('ai_covered')} ${m.finding_count_sent}/${m.finding_count_total}`;
     },
     get vulnDBRows() {
       const rows = [];

@@ -27,6 +27,7 @@ func main() {
 	userFlag := flag.String("user", "", "seed this username's password to -pass if the account doesn't exist yet (does NOT overwrite a password already changed via the web UI — pass -reset-pass to force that)")
 	passFlag := flag.String("pass", "", "password for -user")
 	resetPassFlag := flag.Bool("reset-pass", false, "force -user's password to -pass even if the account already exists (e.g. to recover a forgotten password)")
+	rotateAIKeyFlag := flag.Bool("rotate-ai-key", false, "re-encrypt every stored AI provider API key under a freshly generated ai.key, then exit (the previous key is backed up alongside it)")
 	flag.Parse()
 
 	coreDir := *core
@@ -99,7 +100,26 @@ func main() {
 	} else {
 		log.Printf("auth disabled (-auth=false) — /api/* is open to anyone who can reach %s", *addr)
 	}
-	api := NewAPI(store, worker, triage, reportDB, filepath.Join(dir, "uploads"), coreDir, ghidra, authStore)
+	aiKeyPath := filepath.Join(dir, "ai.key")
+
+	// Rotation runs as a standalone startup action and exits, rather than
+	// as something triggerable on a live server: swapping the key while
+	// requests could be mid-decrypt is exactly the race worth avoiding, and
+	// rotation is rare enough that a brief restart is a fine price.
+	if *rotateAIKeyFlag {
+		if err := rotateAIKey(dir, reportDB); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	aiKey, err := loadOrCreateAIKey(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("AI provider secrets key: %s (back this up together with reports.db/users.json -- losing it permanently strands, not exposes, every stored AI provider key)", aiKeyPath)
+
+	api := NewAPI(store, worker, triage, reportDB, filepath.Join(dir, "uploads"), coreDir, ghidra, authStore, aiKey)
 
 	mux := http.NewServeMux()
 	api.Routes(mux)

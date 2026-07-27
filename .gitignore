@@ -6,15 +6,20 @@ __pycache__/
 build/
 dist/
 
-# Go service build artifact
+# Go service build artifact. `service/service` is what `go build` produces
+# when run from inside service/ without -o, which is easy to do by accident
+# (and is a ~17MB binary), so it's ignored alongside the named variants.
 service/ifda-service
 service/fwana-service
+service/service
 
 # Service runtime data (triage state, uploads, users.json password hashes)
 service/data/
 service/.data/
 service/jobs/
 service/users.json
+service/ai.key
+service/ai.key.bak-*
 service/reports.db
 service/reports.db-shm
 service/reports.db-wal

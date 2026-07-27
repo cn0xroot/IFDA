@@ -6,32 +6,108 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // API exposes the REST surface (FR-INT-1) over the store + worker.
 type API struct {
-	store     *Store
-	worker    *Worker
-	triage    *TriageStore
-	reportDB  *ReportDB
-	uploadDir string
-	coreDir   string        // repo root containing the ifda package (for static reference data like vuln_db.json)
-	ghidra    bool          // whether the core's Ghidra decompile enrichment is usable
-	authStore *AuthStore    // nil means login is disabled
-	captcha   *CaptchaStore // only meaningful when authStore != nil
+	store      *Store
+	worker     *Worker
+	triage     *TriageStore
+	reportDB   *ReportDB
+	uploadDir  string
+	coreDir    string        // repo root containing the ifda package (for static reference data like vuln_db.json)
+	ghidra     bool          // whether the core's Ghidra decompile enrichment is usable
+	authStore  *AuthStore    // nil means login is disabled
+	captcha    *CaptchaStore // only meaningful when authStore != nil
+	aiKey      []byte        // local key encrypting AI provider API keys at rest, see aicrypto.go
+	httpClient *http.Client  // shared outbound client for calling AI providers
+
+	// aiRuns tracks which jobs currently have an analysis streaming, so a
+	// second concurrent run on the same job is refused rather than allowed
+	// to interleave its partial-content writes with the first one's (both
+	// write the whole accumulated text to the same row every ~500ms, so
+	// two in flight would leave the stored content flapping between two
+	// different partial transcripts). Process-local, which is the right
+	// scope: it guards the writers, and the writers live in this process.
+	aiRunsMu sync.Mutex
+	aiRuns   map[string]bool
 }
 
-func NewAPI(store *Store, worker *Worker, triage *TriageStore, reportDB *ReportDB, uploadDir, coreDir string, ghidra bool, authStore *AuthStore) *API {
-	return &API{store: store, worker: worker, triage: triage, reportDB: reportDB, uploadDir: uploadDir, coreDir: coreDir, ghidra: ghidra,
-		authStore: authStore, captcha: NewCaptchaStore()}
+// beginAIRun claims the analysis slot for jobID, reporting false if one is
+// already in flight. Every successful claim must be paired with endAIRun.
+func (a *API) beginAIRun(jobID string) bool {
+	a.aiRunsMu.Lock()
+	defer a.aiRunsMu.Unlock()
+	if a.aiRuns[jobID] {
+		return false
+	}
+	if a.aiRuns == nil {
+		a.aiRuns = map[string]bool{}
+	}
+	a.aiRuns[jobID] = true
+	return true
 }
+
+func (a *API) endAIRun(jobID string) {
+	a.aiRunsMu.Lock()
+	defer a.aiRunsMu.Unlock()
+	delete(a.aiRuns, jobID)
+}
+
+func NewAPI(store *Store, worker *Worker, triage *TriageStore, reportDB *ReportDB, uploadDir, coreDir string, ghidra bool, authStore *AuthStore, aiKey []byte) *API {
+	return &API{store: store, worker: worker, triage: triage, reportDB: reportDB, uploadDir: uploadDir, coreDir: coreDir, ghidra: ghidra,
+		authStore: authStore, captcha: NewCaptchaStore(), aiKey: aiKey, httpClient: newAIHTTPClient(),
+		aiRuns: map[string]bool{}}
+}
+
+// newAIHTTPClient builds the outbound client used for AI provider calls.
+//
+// Deliberately NOT http.Client{Timeout: ...}: that field bounds the whole
+// request lifecycle *including reading the response body*, which for a
+// streaming completion means the entire generation has to finish inside it
+// or the stream is severed mid-sentence. A long findings-triage narrative
+// at the current max_tokens default routinely takes several minutes at
+// typical generation speeds, so a whole-request deadline is exactly the
+// wrong shape here (an earlier 120s Timeout did cut real analyses off, and
+// reported it as "provider did not respond in time" even though the
+// provider had been streaming perfectly well the entire time).
+//
+// What actually needs bounding is a provider that accepts the connection
+// and then says nothing -- so the limits are per-phase (connect / TLS /
+// response headers) plus an idle-between-chunks limit, all of which leave
+// a healthily-streaming response free to take as long as it legitimately
+// needs. Overall cancellation still works: every request is built with
+// r.Context(), so a browser disconnect aborts the upstream call promptly.
+func newAIHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: aiResponseHeaderTimeout,
+			// Guards the gap *between* streamed chunks, not the total
+			// duration -- a stalled stream still fails, a slow-but-alive
+			// one doesn't.
+			IdleConnTimeout:       90 * time.Second,
+			ExpectContinueTimeout: 5 * time.Second,
+		},
+	}
+}
+
+// aiResponseHeaderTimeout bounds how long a provider may take to start
+// responding (send headers) before we give up. Generous enough to absorb
+// queueing/cold-start on a busy gateway, but far short of the multi-minute
+// span a long generation may legitimately occupy once it has started.
+const aiResponseHeaderTimeout = 90 * time.Second
 
 // auth wraps a handler to require a valid session when login is enabled.
 // /healthz and /api/login stay open; every other /api/* route that can read
@@ -86,6 +162,13 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/triage/history", a.auth(a.triageHistory))
 	mux.HandleFunc("GET /api/vulndb", a.auth(a.getVulnDB))
 	mux.HandleFunc("POST /api/upload", a.auth(a.upload))
+	mux.HandleFunc("GET /api/ai/providers", a.auth(a.listAIProviders))
+	mux.HandleFunc("POST /api/ai/providers", a.auth(a.createAIProvider))
+	mux.HandleFunc("PUT /api/ai/providers/{id}", a.auth(a.updateAIProvider))
+	mux.HandleFunc("DELETE /api/ai/providers/{id}", a.auth(a.deleteAIProvider))
+	mux.HandleFunc("POST /api/ai/models", a.auth(a.fetchAIModels))
+	mux.HandleFunc("GET /api/jobs/{id}/ai-analysis", a.auth(a.getAIAnalysis))
+	mux.HandleFunc("POST /api/jobs/{id}/ai-analysis", a.auth(a.runAIAnalysis))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "ghidra_available": a.ghidra, "login_required": a.authStore != nil})
 	})
