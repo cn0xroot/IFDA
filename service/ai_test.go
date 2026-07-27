@@ -418,6 +418,87 @@ func TestOpenAIStreamChatCompletionEmptyWithFinishReason(t *testing.T) {
 	}
 }
 
+// Regression for the "AI 分析被中断" bug: a real third-party Anthropic gateway
+// cut a long generation mid-sentence, sending no message_delta stop_reason and
+// no message_stop. bufio.Scanner reports that EOF as a clean end (Err()==nil),
+// so the stream was previously stored as a completed analysis (status=done)
+// ending mid-word. An interrupted stream must surface as an error, with the
+// partial text still emitted so it can be preserved.
+func TestAnthropicStreamChatCompletionInterruptedIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"the analysis so far\"}}\n\n")
+		// Connection ends here: no message_delta stop_reason, no message_stop.
+	}))
+	defer srv.Close()
+
+	content, err := collectDeltas(t, context.Background(), srv.Client(), "anthropic", srv.URL, "k", "claude-x",
+		[]chatMessage{{Role: "user", Content: "hi"}})
+	if !errors.Is(err, errStreamInterrupted) {
+		t.Fatalf("err = %v, want errStreamInterrupted", err)
+	}
+	if content != "the analysis so far" {
+		t.Errorf("content = %q, want the partial text still emitted (it must be preservable)", content)
+	}
+}
+
+// A stream terminated by message_stop but without a stop_reason is a normal,
+// complete stream (some gateways omit stop_reason) -- it must NOT be flagged
+// as interrupted, or terse-but-complete answers would spuriously error.
+func TestAnthropicStreamChatCompletionMessageStopWithoutReasonIsComplete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n")
+		fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+
+	content, err := collectDeltas(t, context.Background(), srv.Client(), "anthropic", srv.URL, "k", "claude-x",
+		[]chatMessage{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatalf("err = %v, want nil (message_stop terminates the stream)", err)
+	}
+	if content != "done" {
+		t.Errorf("content = %q, want %q", content, "done")
+	}
+}
+
+// The OpenAI counterpart: content but neither a finish_reason nor [DONE] means
+// the provider cut the stream; it must error rather than be stored as complete.
+func TestOpenAIStreamChatCompletionInterruptedIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"half an answer\"},\"finish_reason\":null}]}\n\n")
+		// No terminating finish_reason chunk and no [DONE].
+	}))
+	defer srv.Close()
+
+	content, err := collectDeltas(t, context.Background(), srv.Client(), "openai", srv.URL, "k", "gpt-test",
+		[]chatMessage{{Role: "user", Content: "hi"}})
+	if !errors.Is(err, errStreamInterrupted) {
+		t.Fatalf("err = %v, want errStreamInterrupted", err)
+	}
+	if content != "half an answer" {
+		t.Errorf("content = %q, want the partial text still emitted", content)
+	}
+}
+
+// A stream that sends [DONE] but no finish_reason chunk (some gateways do this)
+// is complete, not interrupted.
+func TestOpenAIStreamChatCompletionDoneWithoutFinishReasonIsComplete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"}}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	content, err := collectDeltas(t, context.Background(), srv.Client(), "openai", srv.URL, "k", "gpt-test",
+		[]chatMessage{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatalf("err = %v, want nil ([DONE] terminates the stream)", err)
+	}
+	if content != "complete" {
+		t.Errorf("content = %q, want %q", content, "complete")
+	}
+}
+
 func TestAnthropicFetchModelsUsesXAPIKeyAuth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("x-api-key"); got != "test-key" {

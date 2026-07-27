@@ -19,6 +19,14 @@ var (
 	errEmptyChoices  = errors.New("provider returned no choices")
 	errProviderNotOK = errors.New("provider returned a non-2xx response")
 	errNonJSONBody   = errors.New("provider returned a non-JSON response")
+	// errStreamInterrupted is returned when the SSE stream ends without any
+	// terminal marker -- no [DONE] and no finish_reason (OpenAI), or no
+	// message_stop and no stop_reason (Anthropic). A well-formed stream always
+	// signals how it ended; reaching EOF with none of those means the provider
+	// (often a third-party gateway) cut the generation mid-output. bufio.Scanner
+	// reports EOF as a clean end (Err()==nil), so without this check a truncated
+	// stream would be passed off as a complete answer.
+	errStreamInterrupted = errors.New("provider ended the stream without a completion signal (the generation was cut off mid-output -- often a gateway or upstream timeout dropping a long response)")
 )
 
 // anthropicVersion is Anthropic's required API-version header value. Pinned
@@ -545,6 +553,7 @@ func openaiStreamChatCompletion(ctx context.Context, client *http.Client, base s
 
 	scanner := sseScanner(resp.Body)
 	gotAny := false
+	sawDone := false
 	checkedFirstLine := false
 	var finishReason string
 	// tool_calls arrive spread across chunks: the id and name usually land
@@ -567,6 +576,7 @@ func openaiStreamChatCompletion(ctx context.Context, client *http.Client, base s
 			continue
 		}
 		if payload == "[DONE]" {
+			sawDone = true
 			break
 		}
 		var chunk struct {
@@ -625,6 +635,15 @@ func openaiStreamChatCompletion(ctx context.Context, client *http.Client, base s
 		}
 		return streamResult{}, errEmptyChoices
 	}
+	// A compliant stream ends with a finish_reason on the last chunk and/or
+	// the [DONE] sentinel. If it produced output but signalled neither, the
+	// provider cut it off mid-generation -- report that rather than storing a
+	// mid-sentence fragment as a finished analysis. (Gateways that omit
+	// finish_reason but still send [DONE] are treated as complete, so this
+	// does not misfire on merely terse-but-terminated streams.)
+	if finishReason == "" && !sawDone {
+		return streamResult{}, errStreamInterrupted
+	}
 	if finishReason == "length" {
 		onDelta(truncationNotice)
 	}
@@ -681,6 +700,7 @@ func anthropicStreamChatCompletion(ctx context.Context, client *http.Client, bas
 
 	scanner := sseScanner(resp.Body)
 	gotAny := false
+	sawMessageStop := false
 	checkedFirstLine := false
 	var currentEvent, stopReason string
 	// Anthropic frames tool calls as content blocks: a content_block_start
@@ -702,6 +722,9 @@ func anthropicStreamChatCompletion(ctx context.Context, client *http.Client, bas
 			currentEvent = "" // blank line ends an SSE event block
 		case strings.HasPrefix(line, "event:"):
 			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			if currentEvent == "message_stop" {
+				sawMessageStop = true // the stream's terminal event; its absence at EOF means a cut
+			}
 		case strings.HasPrefix(line, "data:"):
 			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if payload == "" {
@@ -779,6 +802,13 @@ func anthropicStreamChatCompletion(ctx context.Context, client *http.Client, bas
 		}
 		return streamResult{}, errEmptyChoices
 	}
+	// A compliant Anthropic stream ends with message_delta (carrying
+	// stop_reason) and a message_stop event. Output but neither of those means
+	// the provider cut the generation mid-output -- surface it instead of
+	// passing a mid-sentence fragment off as a finished analysis.
+	if stopReason == "" && !sawMessageStop {
+		return streamResult{}, errStreamInterrupted
+	}
 	if stopReason == "max_tokens" {
 		onDelta(truncationNotice)
 	}
@@ -802,6 +832,10 @@ func aiErrorMessage(err error, host string) string {
 		return "provider returned no models -- check host URL and key"
 	case errors.Is(err, errEmptyChoices):
 		return "AI provider returned an empty response"
+	case errors.Is(err, errStreamInterrupted):
+		return "AI analysis was interrupted -- the provider cut the stream before finishing. " +
+			"The partial analysis above is incomplete; re-run to try again. " +
+			"If it recurs, the gateway/proxy in front of the model is likely timing out on long responses."
 	case errors.Is(err, errNonJSONBody), errors.Is(err, errProviderNotOK):
 		return err.Error()
 	default:
@@ -819,6 +853,8 @@ func writeAIError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadGateway, "provider returned no models -- check host URL and key")
 	case errors.Is(err, errEmptyChoices):
 		writeErr(w, http.StatusBadGateway, "AI provider returned an empty response")
+	case errors.Is(err, errStreamInterrupted):
+		writeErr(w, http.StatusBadGateway, "AI provider cut the stream before finishing (the response was interrupted mid-output)")
 	case errors.Is(err, errNonJSONBody), errors.Is(err, errProviderNotOK):
 		writeErr(w, http.StatusBadGateway, err.Error())
 	default:
