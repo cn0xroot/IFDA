@@ -23,6 +23,7 @@ _SEVERITY = {
     "command_injection": Severity.HIGH,
     "buffer_overflow": Severity.HIGH,
     "format_string": Severity.MEDIUM,
+    "path_traversal": Severity.HIGH,
 }
 
 

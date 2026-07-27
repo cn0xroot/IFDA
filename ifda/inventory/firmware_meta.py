@@ -35,10 +35,13 @@ _VERMAGIC_RE = re.compile(rb"vermagic=([0-9]+\.[0-9]+(?:\.[0-9]+)?[^\s\x00]*)")
 # starts x.y[.z], optionally with a local suffix (e.g. 4.4.60, 5.10.110-foo).
 _MODULES_DIR_RE = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?[\w.+-]*$")
 
-# Kernel version banners appear early in a kernel image; capping the read
-# bounds worst-case scan time against a firmware with one huge blob (a full
-# flash dump, an uncompressed initrd, ...) without meaningfully risking a miss.
-_SCAN_CAP = 8 * 1024 * 1024
+# Capping the read bounds worst-case scan time against a firmware with one
+# huge blob (a full flash dump, an uncompressed initrd, ...). NOT "early in
+# the file": a real 35MB aarch64 Image built with a modern toolchain was
+# measured with its "Linux version ..." banner sitting at the ~17MB mark, well
+# past a previous 8MB cap that silently missed it -- so this is sized to match
+# _HASH_SIZE_CAP above rather than assume any particular offset.
+_SCAN_CAP = 64 * 1024 * 1024
 
 # Extensions/basenames that make something a config file almost by
 # definition -- checked before any content sniff, so it still works for an

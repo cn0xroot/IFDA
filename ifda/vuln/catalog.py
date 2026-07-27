@@ -60,6 +60,12 @@ SINKS: dict[str, str] = {
     "printf": "format_string",
     "fprintf": "format_string",
     "syslog": "format_string",
+    # Path-manipulation APIs -> path traversal if the path argument is
+    # attacker-influenced (e.g. a CGI param used directly as a filename).
+    "fopen": "path_traversal",
+    "open": "path_traversal",
+    "unlink": "path_traversal",
+    "remove": "path_traversal",
 }
 
 # Taint sources: functions that return/produce attacker-influenced data.
@@ -77,4 +83,6 @@ REMEDIATION = {
     "command_injection": "Avoid shell execution; use execve with a fixed argv and validate/allowlist inputs.",
     "format_string": "Pass a constant format string; never let untrusted data be the format argument.",
     "weak_crypto": "Replace with vetted primitives (SHA-256+, AES, CSPRNG) and rotate any hardcoded keys.",
+    "path_traversal": "Canonicalize the path (resolve '..'/symlinks) and verify it stays under an allowlisted base directory before opening/deleting it; never build filesystem paths directly from untrusted input.",
+    "auth_logic_weakness": "Use a constant-time comparison for secrets (e.g. CRYPTO_memcmp or a manual full-length XOR-accumulate loop) instead of strcmp/memcmp, so response time can't leak the correct value byte-by-byte.",
 }

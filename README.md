@@ -225,10 +225,10 @@ an unchanged target returns a cached result.
 | FR-RE-6 Cross-references (call sites, strings) | ✅ (call/import xrefs) | `re/disasm.py` |
 | FR-RE-7 Scriptable API | ✅ (library + CLI) | `pipeline.py`, `cli.py` |
 | FR-RE-2 Decompiled pseudocode | ✅ (opt-in Ghidra headless; enriches findings) | `re/decompile.py` |
-| FR-VUL-1 Known-CVE correlation | ✅ curated offline DB + required `cve-bin-tool` (NVD/OSV/RedHat/GitLab/Curl, 350+ components) | `vuln/cve.py`, `vuln/cve_bin_tool.py`, `data/vuln_db.json` |
+| FR-VUL-1 Known-CVE correlation | ✅ curated offline DB + required `cve-bin-tool` (NVD/OSV/RedHat/GitLab/Curl, 350+ components); kernel version (own detector, not cve-bin-tool's checker) also correlated | `vuln/cve.py`, `vuln/cve_bin_tool.py`, `data/vuln_db.json` |
 | FR-VUL-2 Dangerous-function detection | ✅ | `vuln/dangerous_funcs.py` |
 | FR-VUL-3 Taint / reachability | ✅ (call-graph heuristic) | `vuln/taint.py` |
-| FR-VUL-4 Vuln-class coverage | ◑ overflow/cmdi/code-inj/file-incl/deserialization/fmt/weak-crypto | `vuln/catalog.py`, `scripts/langs.py` |
+| FR-VUL-4 Vuln-class coverage | ◑ overflow/cmdi/code-inj/file-incl/deserialization/fmt/weak-crypto/path-traversal/auth-logic | `vuln/catalog.py`, `vuln/auth_weak.py`, `scripts/langs.py` |
 | FR-VUL-5 Cross-binary analysis | ✅ (global call graph, CGI→lib) | `vuln/crossbinary.py` |
 | FR-VUL-7 Prioritization + evidence | ✅ | `vuln/findings.py`, `model.py` |
 | FR-VUL-8 Triage state persistence | ✅ | `vuln/findings.py` |
@@ -321,10 +321,18 @@ Full technical detail (root causes, before/after numbers, test counts) is in
 
 - Replace heuristic taint with angr behind the existing `detect_taint_paths` /
   `detect_cross_binary_taint` interfaces.
-- FR-VUL-6 optional sandboxed emulation to confirm reachability.
+- FR-VUL-4: integer-overflow-into-alloc/copy detection (skipped so far — a
+  naive "tainted size reaches malloc/realloc" sink would be too noisy given
+  how ubiquitous allocation is; needs real argument-level analysis, e.g. spot
+  a multiply feeding the size operand, not just reachability).
+- FR-VUL-6 optional sandboxed emulation to confirm reachability, and true
+  dynamic network-service probing (distinct from the static, signature-based
+  service identification already shipped — see `inventory/service_id.py`).
 - FR-REP-2 SPDX output alongside CycloneDX.
-- Service layer hardening: persistent job store, upload/extraction front-end
-  (FR-ING/FR-EXT), authn/z. The queue + REST API + web UI are built (`service/`).
+- Service layer: unify job-queue storage (`service/job.go`, per-job JSON
+  files) with the report store (`service/reportdb.go`, SQLite) onto one
+  backend. Auth (pbkdf2 + per-account lockout + login CAPTCHA, `service/auth.go`
+  + `service/captcha.go`) and persistent report storage are already built.
 
 Call resolution for x86/x86_64, ARM, ARM Thumb-2, AArch64, and MIPS LE/BE is
 all in place.

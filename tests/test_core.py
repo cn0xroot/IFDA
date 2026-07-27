@@ -75,6 +75,98 @@ def test_mitigation_fields_present(seeded_binary):
     assert info.mitigations.nx is not None
 
 
+PATH_TRAVERSAL_C = textwrap.dedent(
+    """
+    #include <stdio.h>
+    #include <stdlib.h>
+    void read_config(void){
+        char *fname = getenv("CONFIG_FILE");
+        FILE *fp = fopen(fname, "r");
+        if (fp) fclose(fp);
+    }
+    int main(void){ read_config(); return 0; }
+    """
+)
+
+
+@pytest.fixture(scope="module")
+def path_traversal_binary(tmp_path_factory):
+    gcc = shutil.which("gcc")
+    if not gcc:
+        pytest.skip("gcc not available")
+    d = tmp_path_factory.mktemp("pathtrav")
+    src, out = d / "v.c", d / "v"
+    src.write_text(PATH_TRAVERSAL_C)
+    subprocess.run(
+        [gcc, "-O0", "-fno-stack-protector", "-no-pie", str(src), "-o", str(out)],
+        check=True,
+    )
+    return str(out)
+
+
+def test_path_traversal_taint(path_traversal_binary):
+    from ifda.pipeline import analyze
+
+    report = analyze(path_traversal_binary)
+    taint = [f for f in report.findings if f.rule == "taint-reachability"]
+    assert any(
+        f.vuln_class == "path_traversal"
+        and "getenv" in f.evidence[0].taint_path
+        and "fopen()" in f.evidence[0].taint_path
+        for f in taint
+    )
+
+
+AUTH_WEAK_C = textwrap.dedent(
+    """
+    #include <string.h>
+    int check_password(const char *in){
+        return strcmp(in, "s3cr3t") == 0;
+    }
+    int main(int c, char **v){ return check_password(v[1]); }
+    """
+)
+
+
+@pytest.fixture(scope="module")
+def auth_weak_binary(tmp_path_factory):
+    gcc = shutil.which("gcc")
+    if not gcc:
+        pytest.skip("gcc not available")
+    d = tmp_path_factory.mktemp("authweak")
+    src, out = d / "v.c", d / "v"
+    src.write_text(AUTH_WEAK_C)
+    subprocess.run(
+        [gcc, "-O0", "-fno-stack-protector", "-no-pie", str(src), "-o", str(out)],
+        check=True,
+    )
+    return str(out)
+
+
+def test_auth_logic_weakness(auth_weak_binary):
+    from ifda.pipeline import analyze
+
+    report = analyze(auth_weak_binary)
+    weak = [f for f in report.findings if f.rule == "auth-logic-weak"]
+    assert any(
+        f.vuln_class == "auth_logic_weakness" and f.evidence[0].function == "check_password"
+        for f in weak
+    )
+
+
+def test_auth_logic_weakness_ignores_non_auth_named_function(tmp_path):
+    from ifda.model import BinaryInfo
+    from ifda.re.disasm import DisasmResult, CallSite
+    from ifda.vuln.auth_weak import detect_auth_weaknesses
+
+    info = BinaryInfo(path="b", sha256="x")
+    disasm = DisasmResult(call_sites=[
+        CallSite(caller="sort_items", address=0x1000, callee="strcmp",
+                  is_imported=True, snippet="call strcmp"),
+    ])
+    assert detect_auth_weaknesses(info, disasm) == []
+
+
 def test_cve_correlation():
     info = BinaryInfo(path="busybox", sha256="x")
     info.strings = ["BusyBox v1.21.1 multi-call binary", "OpenSSL 1.0.1f 6 Jan 2014"]
@@ -90,6 +182,31 @@ def test_cve_not_flagged_when_patched():
     info = BinaryInfo(path="ssl", sha256="x")
     info.strings = ["OpenSSL 1.0.2h 3 May 2016"]
     assert correlate_cves(info) == []
+
+
+def test_kernel_cve_correlation():
+    from ifda.vuln.cve import correlate_kernel_cve
+
+    cves = {c for f in correlate_kernel_cve("4.4.1") for c in f.cve_ids}
+    assert "CVE-2016-5195" in cves  # Dirty COW: predates the 4.8.3 fix
+    assert "CVE-2022-0847" not in cves  # Dirty Pipe needs kernel >= 5.8
+
+    cves58 = {c for f in correlate_kernel_cve("5.10.50") for c in f.cve_ids}
+    assert "CVE-2022-0847" in cves58  # inside the 5.8 <= v < 5.16.11 range
+    assert "CVE-2016-5195" not in cves58  # already past the 4.8.3 fix
+
+
+def test_kernel_cve_not_flagged_when_patched():
+    from ifda.vuln.cve import correlate_kernel_cve
+
+    assert correlate_kernel_cve("5.16.11") == []
+    assert correlate_kernel_cve("") == []
+    # Regression: a real device's 5.15.55 kernel was flagged for Dirty Pipe
+    # by an earlier single-range (5.8 <= v < 5.16.11) modeling of CVE-2022-0847,
+    # even though 5.15.55 is well past the 5.15.25 backported fix point.
+    # linux_kernel's entries are now split per release-train fix point instead.
+    assert correlate_kernel_cve("5.15.55") == []
+    assert correlate_kernel_cve("5.10.150") == []
 
 
 def test_prioritize_orders_by_severity():
@@ -452,6 +569,21 @@ def test_kernel_version_from_vermagic(tmp_path):
         b"\x7fELF\x00\x00" + b"padding" * 4 + b"\x00vermagic=5.10.110 SMP mod_unload\x00")
 
     assert detect_kernel_version(str(tmp_path)) == "5.10.110"
+
+
+def test_kernel_version_banner_past_old_scan_cap(tmp_path):
+    """Regression: a real 35MB aarch64 Image had its "Linux version ..."
+    banner sitting at the ~17MB mark -- past the previous 8MB _SCAN_CAP,
+    which silently missed it. Padding here is deliberately >8MB so this
+    fails against the old cap and only passes against the current one."""
+    from ifda.inventory import detect_kernel_version
+
+    (tmp_path / "boot").mkdir()
+    padding = b"\x00" * (9 * 1024 * 1024)
+    (tmp_path / "boot" / "Image").write_bytes(
+        padding + b"Linux version 5.15.55 (root@build) #2 SMP\x00")
+
+    assert detect_kernel_version(str(tmp_path)) == "5.15.55"
 
 
 def test_firmware_meta_skips_device_nodes(tmp_path):

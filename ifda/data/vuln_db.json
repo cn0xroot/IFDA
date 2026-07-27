@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Offline known-vulnerability DB for component/version correlation (FR-VUL-1). Updatable independently of releases (NFR-USE-2).",
-    "schema": "component -> [ {cve, severity, summary, version_lt? , versions?[] } ]"
+    "schema": "component -> [ {cve, severity, summary, version_lt?, version_ge?, versions?[] } ] (version_lt/version_ge combine as an AND range; versions is an exact-match allowlist and ignores the other two)"
   },
   "busybox": [
     {"cve": "CVE-2018-1000517", "severity": "high", "summary": "BusyBox wget heap buffer overflow", "version_lt": "1.29.0"},
@@ -20,5 +20,11 @@
   ],
   "lighttpd": [
     {"cve": "CVE-2019-11072", "severity": "high", "summary": "lighttpd mod_userdir buffer issue", "version_lt": "1.4.54"}
+  ],
+  "linux_kernel": [
+    {"cve": "CVE-2016-5195", "severity": "critical", "summary": "Dirty COW: race condition in copy-on-write handling allows local privilege escalation (write to read-only mappings)", "version_lt": "4.8.3"},
+    {"cve": "CVE-2022-0847", "severity": "high", "summary": "Dirty Pipe (5.8-5.9, 5.10.0-5.10.101): uninitialized pipe-buffer flag allows overwriting read-only file pages (incl. SUID binaries) for local privilege escalation.", "version_ge": "5.8", "version_lt": "5.10.102"},
+    {"cve": "CVE-2022-0847", "severity": "high", "summary": "Dirty Pipe (5.11-5.14, 5.15.0-5.15.24): uninitialized pipe-buffer flag allows overwriting read-only file pages (incl. SUID binaries) for local privilege escalation.", "version_ge": "5.11", "version_lt": "5.15.25"},
+    {"cve": "CVE-2022-0847", "severity": "high", "summary": "Dirty Pipe (5.16.0-5.16.10): uninitialized pipe-buffer flag allows overwriting read-only file pages (incl. SUID binaries) for local privilege escalation.", "version_ge": "5.16", "version_lt": "5.16.11"}
   ]
 }

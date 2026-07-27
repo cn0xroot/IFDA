@@ -2,6 +2,7 @@
 
 from .dangerous_funcs import detect_dangerous_functions
 from .taint import detect_taint_paths
+from .auth_weak import detect_auth_weaknesses
 from .cve import correlate_cves
 from .cve_bin_tool import cve_bin_tool_available, scan_target
 from .findings import prioritize, TriageStore
@@ -11,6 +12,7 @@ from .config_audit import scan_configs
 __all__ = [
     "detect_dangerous_functions",
     "detect_taint_paths",
+    "detect_auth_weaknesses",
     "correlate_cves",
     "cve_bin_tool_available",
     "scan_target",

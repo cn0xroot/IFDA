@@ -1,9 +1,62 @@
 # 开发进度 — IFDA(IoT Firmware Deep Analysis)
 
 > 配套需求文档:[`firmware-analysis-requirements.md`](firmware-analysis-requirements.md)
-> 最近更新:2026-07-08
+> 最近更新:2026-07-11
 
 ## 0. 变更记录
+
+- **2026-07-11 — v3.7(`ifda.__version__` 2.5.0 → 2.6.0):内核版本 CVE 关联 + 一个真实的扫描上限 bug。**
+
+  用户问"内核漏洞关联是不是已经做了",查代码过程中发现两个独立的坑,而不是单纯的"没做":
+
+  - **bug 1(`inventory/firmware_meta.py`)**:`detect_kernel_version()` 里注释写"内核版本 banner 通常出现在
+    文件早期",所以只读文件头 8MB(`_SCAN_CAP`)。拿真实的 Starlink Dishy aarch64 内核镜像
+    (`qemu-emulator/kernel/Image`,35MB)实测,banner 实际在第 17.1MB 处——这个假设在现代内核上是错的,
+    8MB 上限直接把 banner 截没了,`report.kernel_version` 静默返回空。已把 `_SCAN_CAP` 提到 64MB(与同文件
+    `_HASH_SIZE_CAP` 对齐),改完实测该文件正确识别出 `5.15.55`。
+  - **bug 2(第三方,`cve-bin-tool`)**:cve-bin-tool 自带的 `linux_kernel` checker 存在但**在同一个真实文件上
+    也没识别出版本**——它的版本正则要求版本号后紧跟的编译器字符串只能是 `[a-zA-Z0-9 ,+@\-\.\(\)]`,而这台设备
+    的 banner 里编译器版本号是 `13.3.0-6ubuntu2~24.04`,`~` 直接把匹配断掉。这是第三方 checker 自身的局限
+    (常见于 Ubuntu 系工具链编译的内核),没有去改 cve-bin-tool 本身。
+  - **新增关联路径**:既然不能依赖 cve-bin-tool 的内核检测,新增 `vuln/cve.py` 的
+    `correlate_kernel_cve(kernel_version)`,复用 `report.kernel_version`(我们自己更可靠的探测结果)去匹配
+    `data/vuln_db.json` 新增的 `linux_kernel` 条目——目前收录 Dirty COW(CVE-2016-5195,< 4.8.3)和
+    Dirty Pipe(CVE-2022-0847)。Dirty Pipe 的可复现范围本身跨三个发布分支且各自有不同的 backport 修复点
+    (5.10.102 / 5.15.25 / 5.16.11),用单一 `version_lt` 会把已经 backport 修复的分支(比如这台设备实际跑
+    的 5.15.55,早过 5.15.25 修复点)也误判为易受攻击——为此把 `_vulnerable()` 的 schema 扩成
+    `version_ge`+`version_lt` 可组合的区间,Dirty Pipe 拆成三条按分支精确表达的记录。用真实的 5.15.55 验证:
+    改之前(单区间写法)会误报,改之后正确不误报;用构造的旧内核(4.4.60)验证 Dirty COW 正确命中
+    (CRITICAL,confidence 0.6)。内核也接入了 `report.components`(SBOM/组件清单),`cve_ids` 复用现有的
+    按 `name@version` 匹配逻辑,零改动自动生效。
+  - 单测新增 5 条(scan-cap 回归、Dirty COW/Dirty Pipe 命中、patched 不误报、5.15.55/5.10.150 backport 不误报),
+    全量 `pytest tests/ -q`:62 passed, 2 skipped,零回归。
+  - EMBA 对照表"内核识别/加固"行由 ⬜ 改为 ◑(CVE 关联已做,CONFIG_* 编译选项/grsecurity 等加固检查仍未做)。
+
+- **2026-07-11 — v3.6(`ifda.__version__` 2.4.0 → 2.5.0):FR-VUL-4 扩类——路径遍历 + 认证逻辑弱点(二进制侧)。**
+
+  - **路径遍历**:复用已有的调用图污点可达性引擎(`vuln/taint.py`),把 `fopen`/`open`/`unlink`/
+    `remove` 加进 `catalog.py` 的 `SINKS`,新增 `path_traversal` 漏洞类别(HIGH)。同一套"污点源
+    (`getenv`/`recv`/CGI 取值函数等)→ 调用图可达 sink"机制,不新增检测逻辑,只扩数据表。典型
+    场景:CGI 配置导出/文件下载接口直接用请求参数拼文件名传给 `fopen()`。
+  - **认证逻辑弱点**:新增 `vuln/auth_weak.py`(`detect_auth_weaknesses`,rule
+    `auth-logic-weak`)。启发式:函数名含 auth/login/passwd/password/credential/verify/
+    checkpw 等关键词、且函数体内调用了非常量时间比较函数(`strcmp`/`strncmp`/`memcmp`/
+    `strcasecmp`/`strncasecmp`)——路由器/摄像头固件里常见的"明文 `strcmp` 比对密码/令牌"反模式,
+    存在按响应时间逐字节泄露密码的理论风险(即使不考虑时序攻击,这类比对也常与硬编码后门凭据同现)。
+    新漏洞类别 `auth_logic_weakness`(MEDIUM,置信度 0.45,与污点类发现同档)。
+  - **有意搁置**:整数溢出喂 `malloc`/`realloc` 未做——若照搬"污点可达 sink"套路,几乎每个读网络
+    输入又要分配内存的二进制都会命中(malloc 太常见),噪音远大于其余 sink;需要真正识别"喂给
+    size 参数的乘法/加法运算"这类参数级分析才值得做,留在待办里。
+  - 单测:`tests/test_core.py` 新增 `test_path_traversal_taint`(真实编译 getenv→fopen 样本,
+    验证污点路径含 `path_traversal` 类别)、`test_auth_logic_weakness`(真实编译
+    `check_password()` 内 `strcmp` 样本)、`test_auth_logic_weakness_ignores_non_auth_named_function`
+    (函数名不含关键词时不误报,构造 `CallSite` 单测)。全量 `pytest tests/ -q`:59 passed, 2
+    skipped(较 v3.5 时 +3 条新测试,原有用例零回归)。
+  - 文档修复:README「Next iterations」一节此前仍写"authn/z 未做",但登录认证
+    (`service/auth.go` pbkdf2 + 按账号锁定 + `service/captcha.go` 验证码)和报告持久化
+    (`service/reportdb.go` SQLite)其实早就落地了——已更正,并把"服务层加固"待办项收窄到真正
+    还没做的部分(任务队列存储与报告存储统一到 SQLite)。EMBA 对照表也把"网络服务识别"拆成了
+    v3.5 已做的静态特征匹配和仍未做的动态仿真探测两行,避免混淆。
 
 - **2026-07-08 — v3.5:新增网络服务识别功能(WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi 等),独立标签页 + 仪表盘服务数/端口展示。**
   自 v3.4 以来的改动。
@@ -250,7 +303,7 @@
 | FR-VUL-1 已知 CVE 关联 | ✅(离线 DB) | `vuln/cve.py`, `data/vuln_db.json` |
 | FR-VUL-2 危险函数检测 | ✅ | `vuln/dangerous_funcs.py` |
 | FR-VUL-3 污点 / 可达性 | ✅(调用图启发式) | `vuln/taint.py` |
-| FR-VUL-4 漏洞类别覆盖 | ◑ 溢出/命令注入/代码注入/文件包含/反序列化/格式化串/弱加密 | `vuln/catalog.py`, `scripts/langs.py` |
+| FR-VUL-4 漏洞类别覆盖 | ◑ 溢出/命令注入/代码注入/文件包含/反序列化/格式化串/弱加密/路径遍历/认证逻辑弱点 | `vuln/catalog.py`, `vuln/auth_weak.py`, `scripts/langs.py` |
 | FR-VUL-5 跨二进制分析 | ✅(全局调用图,CGI→库) | `vuln/crossbinary.py` |
 | FR-VUL-7 优先级 + 证据 | ✅ | `vuln/findings.py`, `model.py` |
 | FR-VUL-8 分诊状态持久化 | ✅ | `vuln/findings.py` |
@@ -378,15 +431,16 @@ getenv() → main @ cgi → run_ping @ libcmd.so (cross) → system()
 | 脚本静态分析(shell/PHP/Python/Lua 注入) | S20-S28 | FR-INV-3 | ✅ shell + PHP/Python/Lua(命令/代码/文件包含/反序列化) |
 | 文件系统配置/加固(setuid、世界可写、init) | S40-S55 | 攻击面/FR-INV | ✅ **本轮借鉴落地** |
 | 可外置签名规则(YARA 风格) | S110 | FR-INT-3 | ✅ **本轮落地**(原生 JSON 规则库 + yara-python 可选桥;熵值兜底补无前缀密钥) |
-| 内核识别/加固 | S24-S26 | FR-INV/FR-VUL | ⬜ 未做 |
-| 系统仿真 + 网络服务探测 | L10-L35 | FR-VUL-6 | ⬜ 未做(重) |
+| 内核识别/加固 | S24-S26 | FR-INV/FR-VUL | ◑ **v3.7 落地内核版本 CVE 关联**(`vuln/cve.py` correlate_kernel_cve);加固检查(CONFIG_* 编译选项、grsecurity 标记等)仍未做 |
+| 网络服务识别(静态特征库) | S ~06 | — | ✅ **v3.5 落地**(`inventory/service_id.py`,纯签名匹配,非实测流量) |
+| 系统仿真 + 动态网络服务探测 | L10-L35 | FR-VUL-6 | ⬜ 未做(重;与上面的静态识别是两回事) |
 
 ## 6. 待办(按优先级)
 
 1. **FR-VUL-6 沙箱仿真(借鉴 EMBA L 系列)** — 可选,验证可达性、降低误报。
-2. **FR-VUL-4 扩类** — 整数溢出喂分配/拷贝、路径遍历、认证逻辑弱点(二进制侧)。
+2. **FR-VUL-4 扩类:整数溢出喂分配/拷贝** — 路径遍历、认证逻辑弱点(二进制侧)已在 v3.6 落地(见变更记录);整数溢出因"污点可达 malloc/realloc"噪音太大(几乎所有网络输入型二进制都会命中)故意搁置,需要真正的参数级分析(识别喂给 size 参数的乘法运算)才值得做。
 3. **签名规则面扩展** — 把命令注入/弱函数等也纳入外置 YARA/规则文件,并补一组 `data/yara/*.yar` 实样。
-4. **服务层加固** — 持久化任务存储(Postgres/Redis)、前置上传/提取(FR-ING/FR-EXT)、认证授权;当前队列/REST/Web UI 已建(`service/`)。
+4. **服务层加固** — 统一任务队列存储(`service/job.go` 目前逐个 JSON 文件)到报告层已用的 SQLite(`service/reportdb.go`);认证授权(pbkdf2 + 按账号锁定 + 登录验证码)已落地,`service/auth.go`/`service/captcha.go`。
 5. **反编译增强** — 在伪代码上叠加数据流(如把 `--decompile` 结果喂二次污点),或加 radare2 作为轻量备选后端。
 
 ## 7. 运行方式

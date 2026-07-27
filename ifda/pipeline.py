@@ -16,6 +16,7 @@ from .re import detect_mitigations, disassemble
 from .vuln import (
     detect_dangerous_functions,
     detect_taint_paths,
+    detect_auth_weaknesses,
     correlate_cves,
     cve_bin_tool_available,
     scan_target as cve_bin_tool_scan,
@@ -24,7 +25,7 @@ from .vuln import (
     scan_backdoors,
     scan_configs,
 )
-from .vuln.cve import extract_sbom
+from .vuln.cve import extract_sbom, correlate_kernel_cve
 from .vuln.crossbinary import detect_cross_binary_taint
 from .inventory import (
     scan_secrets, detect_kernel_version, list_all_files, summarize_arch_endian, audit_busybox,
@@ -74,6 +75,7 @@ def _analyze_unit(path: str):
     for stage in (
         lambda: detect_dangerous_functions(info, disasm),
         lambda: detect_taint_paths(info, disasm),
+        lambda: detect_auth_weaknesses(info, disasm),
         lambda: correlate_cves(info),
     ):
         try:
@@ -285,6 +287,14 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     except Exception:
         pass
 
+    # Kernel-version CVE correlation (FR-VUL-1), decoupled from cve-bin-tool's
+    # per-binary linux_kernel checker -- see correlate_kernel_cve's docstring
+    # for why that checker can silently miss modern toolchain-built banners.
+    try:
+        report.findings.extend(correlate_kernel_cve(report.kernel_version))
+    except Exception:
+        pass
+
     # Tally each script's own finding count now that every stage that can
     # produce a script-attributed finding (secrets, cmd-injection, hardening)
     # has run, so a clean script is still listed (with findings=0) instead of
@@ -318,6 +328,11 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
         for b in c.binaries:
             if b not in existing.binaries:
                 existing.binaries.append(b)
+    # Kernel itself, keyed to match correlate_kernel_cve's component string
+    # (linux_kernel@<version>) so cves_by_component below picks it up.
+    if report.kernel_version:
+        comps.setdefault(("linux_kernel", report.kernel_version),
+                          ComponentInfo(name="linux_kernel", version=report.kernel_version))
     cves_by_component: dict[str, list[str]] = {}
     for f in report.findings:
         if f.cve_ids:
