@@ -90,10 +90,22 @@ Python 核心是一个库 + CLI。项目选择的**混合架构**把批量/大�
 - [**cve-bin-tool**](https://github.com/intel/cve-bin-tool)（OpenSSF 旗下项目）—— FR-VUL-1
   广域 CVE 覆盖背后的实际引擎，也是 EMBA 自己用来做 CVE 关联的同一个工具。
 
+## 平台支持
+
+ifda 可运行于 **Linux 和 macOS**（Apple Silicon 与 Intel 均可）。分析是在你的机器上
+进行的，而不是在固件的目标 CPU 上：**capstone** 无论宿主机是什么架构都能反汇编
+MIPS/ARM 等，所以仅为分析一个异构架构的固件，并不需要交叉编译器或模拟器。Go 服务层
+在两个平台都能原生构建——它使用纯 Go 的 SQLite 驱动（`modernc.org/sqlite`，无 cgo），
+因此 `go build` 不需要 C 工具链，产出的是自包含的二进制。扫描任务控制（暂停/恢复/取消）
+使用 POSIX 进程组，在 Linux 和 macOS（Darwin）上行为一致。
+
+不支持 Windows；在 Windows 上请使用 WSL2。
+
 ## 安装
 
 > 完整的分步环境搭建（Go 升级、交叉编译器、Ghidra + JDK 的坑、验证方法）见
 > [`ENVIRONMENT.md`](ENVIRONMENT.md)。
+> **macOS 用户请看下方[专门的 macOS 指南](#在-macos-上运行)。**
 
 ```bash
 # Python 分析核心
@@ -104,6 +116,52 @@ pip install yara-python    # 可选: 存在 data/yara/*.yar 时启用 YARA 阶�
 # Go 服务层（可选——仅在需要 REST API + Web UI 时安装）
 cd service && go build -o ifda-service .                # Go 1.22+
 ```
+
+### 在 macOS 上运行
+
+上面的命令假设是 Debian/Ubuntu。在 macOS 上唯一的区别是包管理器和 Ghidra/JDK 的安装；
+其余完全一致。
+
+```bash
+# 1. 用 Homebrew 装工具链（https://brew.sh）
+brew install python@3.12 go            # 服务层需要 Go 1.22+
+
+# 2. Python 分析核心——capstone/pyelftools 都提供 arm64 + x86_64 的 wheel，
+#    所以 pip 在 Apple Silicon 和 Intel 上用法一致。建议用 venv，避免污染
+#    系统/brew 自带的 Python。
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .            # 会一并装上 capstone + pyelftools
+pip install cve-bin-tool    # 必需: 广域 CVE 覆盖
+pip install yara-python     # 可选: YARA 阶段
+
+# 3. Go 服务层（可选——REST API + Web UI）。纯 Go 的 SQLite 意味着不需要
+#    Xcode/CGO；在 arm64 和 Intel 上都能原生构建运行。
+cd service && go build -o ifda-service . && cd ..
+
+# 4. Ghidra 伪代码增强（可选；对应 --decompile 参数 / 服务端增强）。
+#    需要 JDK 17+，且 Ghidra 在 PATH 上或位于 GHIDRA_HOME。
+brew install --cask ghidra          # 会一并装一个 JDK；或: brew install openjdk@17
+export GHIDRA_HOME="$(brew --prefix)/opt/ghidra/libexec"   # 按你的实际安装路径调整
+```
+
+之后的运行方式与 Linux 完全相同——下方 **用法** 一节的 CLI 和服务命令都是跨平台的：
+
+```bash
+# CLI
+python3 -m ifda.cli analyze /path/to/extracted_rootfs --json report.json
+
+# 服务（REST API + Web UI，地址 http://localhost:8080）
+cd service && ./ifda-service -addr :8080
+```
+
+macOS 特有的注意事项：
+
+- **Gatekeeper**：用 Homebrew 安装的 Ghidra 已被信任；只有手动下载的 Ghidra.app 可能
+  需要右键 → 打开，或执行 `xattr -dr com.apple.quarantine /path/to/ghidra`。
+- **解包工具**（binwalk、unsquashfs 等）属于摄取环节，不在本仓库范围内，但当你需要先把
+  镜像解包、再把解包后的目录树交给 ifda 时，用 `brew install binwalk squashfs` 即可干净安装。
+- **文件权限/加固检查**读取的是标准 Unix 权限位，macOS 同样提供——`weak_permissions`
+  类发现（全局可读的 `/etc/shadow`、SSH 主机私钥等）行为完全一致。
 
 `cve-bin-tool` 会维护自己的本地 CVE 数据库（NVD + OSV + RedHat + GitLab Advisory + Curl，
 约 1GB+）；某台机器上首次扫描时会下载/更新该数据库，所以第一次运行会较慢且需要联网。

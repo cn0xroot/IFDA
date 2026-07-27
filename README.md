@@ -98,10 +98,24 @@ that drives this core one job at a time via the CLI. The JSON model
   engine behind FR-VUL-1's broad CVE coverage, and the same tool EMBA itself wraps for CVE
   correlation.
 
+## Platform support
+
+ifda runs on **Linux and macOS** (Apple Silicon and Intel). Analysis happens on
+your machine, not on the firmware's target CPU: **capstone** disassembles
+MIPS/ARM/etc. regardless of the host architecture, so no cross-compilers or
+emulation are needed just to analyze a foreign-arch firmware. The Go service
+layer builds natively on both platforms — it uses a pure-Go SQLite driver
+(`modernc.org/sqlite`, no cgo), so `go build` needs no C toolchain and produces
+a self-contained binary. Scan job control (pause / resume / cancel) uses POSIX
+process groups, which work the same on Linux and macOS (Darwin).
+
+Windows is not targeted; use WSL2 there.
+
 ## Install
 
 > Full step-by-step environment setup (Go upgrade, cross-compilers, Ghidra + JDK
 > pitfalls, verification) is in [`ENVIRONMENT.md`](ENVIRONMENT.md).
+> **On macOS, see the [dedicated macOS guide](#running-on-macos) below.**
 
 ```bash
 # Python analysis core
@@ -112,6 +126,56 @@ pip install yara-python    # optional: enables the YARA stage if data/yara/*.yar
 # Go service layer (optional — only if you want the REST API + web UI)
 cd service && go build -o ifda-service .                # Go 1.22+
 ```
+
+### Running on macOS
+
+The commands above assume Debian/Ubuntu. On macOS the only differences are the
+package manager and the Ghidra/JDK install; everything else is identical.
+
+```bash
+# 1. Toolchain via Homebrew (https://brew.sh)
+brew install python@3.12 go            # Go 1.22+ for the service layer
+
+# 2. Python analysis core — capstone/pyelftools ship arm64 + x86_64 wheels,
+#    so pip works the same on Apple Silicon and Intel. A venv is recommended
+#    so it doesn't touch the system/brew Python.
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .            # pulls in capstone + pyelftools
+pip install cve-bin-tool    # required: broad CVE coverage
+pip install yara-python     # optional: YARA stage
+
+# 3. Go service layer (optional — REST API + web UI). Pure-Go SQLite means no
+#    Xcode/CGO is required; it builds and runs natively on arm64 and Intel.
+cd service && go build -o ifda-service . && cd ..
+
+# 4. Ghidra pseudocode enrichment (optional; the --decompile flag / service
+#    enrichment). Needs a JDK 17+ and Ghidra on PATH or at GHIDRA_HOME.
+brew install --cask ghidra          # also pulls a JDK; or: brew install openjdk@17
+export GHIDRA_HOME="$(brew --prefix)/opt/ghidra/libexec"   # adjust to your install
+```
+
+Then run exactly as on Linux — the CLI and service invocations in **Usage**
+below are platform-independent:
+
+```bash
+# CLI
+python3 -m ifda.cli analyze /path/to/extracted_rootfs --json report.json
+
+# Service (REST API + web UI at http://localhost:8080)
+cd service && ./ifda-service -addr :8080
+```
+
+macOS-specific notes:
+
+- **Gatekeeper**: a Homebrew-installed Ghidra is already trusted; only a
+  manually-downloaded Ghidra.app may need one right-click → Open, or
+  `xattr -dr com.apple.quarantine /path/to/ghidra`.
+- **Extraction tools** (binwalk, unsquashfs, etc.) are ingestion-side and out of
+  this repo's scope, but install cleanly via `brew install binwalk squashfs`
+  when you need to unpack an image before pointing ifda at the extracted tree.
+- **File permissions / hardening checks** read standard Unix modes, which macOS
+  provides — the `weak_permissions` findings (world-readable `/etc/shadow`,
+  SSH host keys, etc.) work identically.
 
 `cve-bin-tool` maintains its own local CVE database (NVD + OSV + RedHat + GitLab
 Advisory + Curl, ~1GB+); the first scan on a machine downloads/updates it, so
@@ -381,4 +445,3 @@ Full technical detail (root causes, before/after numbers, test counts) is in
 
 Call resolution for x86/x86_64, ARM, ARM Thumb-2, AArch64, and MIPS LE/BE is
 all in place.
-```
