@@ -2192,6 +2192,12 @@ function app() {
     select(id) {
       this.compareMode = false; this.showVulnDB = false; this.showSensitiveDict = false;
       this.stopAIPolling(); // whatever we were watching, it isn't this job
+      // Switching jobs must not carry the previous job's AI analysis into the
+      // new job's view (that showed up as opening one scan's AI page and
+      // seeing another scan's cached result). Guarded on an actual job change
+      // so re-selecting the current job never nulls an aiAnalysis object a
+      // live run is still streaming into (runAIAnalysis mutates it in place).
+      if (id !== this.selectedId) { this.aiAnalysis = null; this.aiError = ""; this.aiToolActivity = []; }
       this.selectedId = id; this.summary = null; this.tab = "dashboard";
       if (this.sse) { this.sse.close(); this.sse = null; }
       const job = this.jobs.find(x => x.id === id);
@@ -2807,13 +2813,23 @@ function app() {
     },
     async loadAIAnalysis() {
       if (!this.aiProviders.length) await this.loadAIProviders();
-      if (!this.selectedId) return;
+      // Capture the job this load is for. Every await below can interleave
+      // with another job switch, so the response must only be applied if it
+      // is still the selected job -- otherwise a slower fetch for the previous
+      // job would clobber the current job's view with the wrong analysis.
+      const jobId = this.selectedId;
+      if (!jobId) { this.aiAnalysis = null; return; }
       this.aiError = ""; this.aiStreaming = false; // this load isn't itself a live stream -- see runAIAnalysis
+      // A run this tab owns is already streaming into aiAnalysis in place; a
+      // one-shot GET would overwrite that live object with a stale snapshot.
+      if (this.aiRunning && this.aiAnalysis && this.aiAnalysis.job_id === jobId) { this.syncAIPolling(); return; }
       try {
-        const r = await this.apiFetch(`/api/jobs/${this.selectedId}/ai-analysis`);
-        this.aiAnalysis = r.ok ? await r.json() : null;
-      } catch (e) { this.aiAnalysis = null; }
-      this.syncAIPolling();
+        const r = await this.apiFetch(`/api/jobs/${jobId}/ai-analysis`);
+        const j = r.ok ? await r.json() : null;
+        if (this.selectedId !== jobId) return; // switched away mid-fetch: don't paint a stale job's result
+        this.aiAnalysis = j;
+      } catch (e) { if (this.selectedId === jobId) this.aiAnalysis = null; }
+      if (this.selectedId === jobId) this.syncAIPolling();
     },
     // A streaming run only pushes deltas to the tab that started it. Any
     // other viewer of the same job (another tab, a reload, or arriving via
