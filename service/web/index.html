@@ -335,8 +335,53 @@
                padding:9px 11px; margin:0 0 12px; font-size:11.5px; }
   .aiToolLog .hd { color:var(--muted); text-transform:uppercase; letter-spacing:.05em;
                    font-size:10px; font-weight:700; margin-bottom:5px; }
-  .aiToolLog .row { display:flex; gap:8px; color:var(--soft); padding:1px 0; }
+  .aiToolLog .row { display:flex; gap:8px; align-items:baseline; color:var(--soft); padding:1.5px 0;
+                    animation:aiRowIn .28s ease-out both; }
   .aiToolLog .row .nm { color:var(--accent-h); flex:none; }
+  .aiToolLog .row .tick { color:var(--ok); flex:none; font-size:10px; }
+  @keyframes aiRowIn { from { opacity:0; transform:translateY(-3px); } to { opacity:1; transform:none; } }
+
+  /* ---- live "still working" affordances ----
+     Before this the indeterminate bar was hidden as soon as the first token
+     arrived, so a model pausing to think (or running a tool round) looked
+     exactly like a finished analysis. The status strip persists for the
+     whole run, and the caret marks the live end of the text. */
+  .aiLive { display:flex; align-items:center; gap:10px; margin:0 0 10px;
+            padding:8px 11px; border:1px solid var(--line); border-radius:8px;
+            background:linear-gradient(90deg,
+              color-mix(in srgb, var(--accent) 7%, var(--panel)), var(--panel)); }
+  .aiLive .pulse { width:8px; height:8px; border-radius:50%; flex:none; background:var(--accent);
+                   animation:aiPulse 1.4s ease-in-out infinite; }
+  @keyframes aiPulse {
+    0%,100% { opacity:1;  box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+    50%     { opacity:.55; box-shadow:0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); }
+  }
+  .aiLive .phase { font-size:12.5px; font-weight:600; color:var(--fg); }
+  .aiLive .elapsed { margin-left:auto; font-size:11.5px; color:var(--muted);
+                     font-variant-numeric:tabular-nums; }
+  /* Hairline indeterminate sweep along the bottom edge of the strip. */
+  .aiLive .sweep { position:absolute; left:0; right:0; bottom:-1px; height:2px; overflow:hidden;
+                   border-radius:0 0 8px 8px; }
+  .aiLive { position:relative; }
+  .aiLive .sweep > i { display:block; height:100%; width:34%;
+                       background:linear-gradient(90deg, transparent, var(--accent), transparent);
+                       animation:aiSweep 1.6s ease-in-out infinite; }
+  @keyframes aiSweep { 0% { margin-left:-34%; } 100% { margin-left:100%; } }
+
+  /* Blinking caret pinned to the end of the streaming text -- the clearest
+     single signal that more is still coming. */
+  .aiCaret { display:inline-block; width:7px; height:1.05em; vertical-align:text-bottom;
+             background:var(--accent); margin-left:1px; animation:aiBlink 1.05s step-end infinite; }
+  @keyframes aiBlink { 0%,100% { opacity:1; } 50% { opacity:0; } }
+
+  /* Anyone who has asked the OS for less motion gets the states without the
+     animation -- the information is in the presence of the elements, not
+     the movement. */
+  @media (prefers-reduced-motion: reduce) {
+    .aiToolLog .row, .aiLive .pulse, .aiLive .sweep > i, .aiCaret,
+    .bar.indeterminate > span { animation:none; }
+    .aiCaret { opacity:1; }
+  }
 </style>
 </head>
 <body x-data="app()" x-init="init()">
@@ -1541,23 +1586,29 @@
                 <span x-text="t('ai_result_from') + ': ' + aiAnalysis.provider_name + ' (' + aiAnalysis.model + ')'"></span>
                 <span x-show="aiPromptMetaText" x-text="aiPromptMetaText"></span>
               </p>
-              <template x-if="aiAnalysis.status === 'running' && !aiStreaming">
-                <div>
-                  <div class="bar indeterminate"><span></span></div>
-                  <p class="meta" x-text="t('ai_running')"></p>
-                </div>
-              </template>
+              <div class="aiLive" x-show="aiAnalysis.status === 'running'">
+                <span class="pulse"></span>
+                <span class="phase" x-text="aiPhaseText"></span>
+                <span class="elapsed" x-show="aiElapsed > 0" x-text="formatElapsed(aiElapsed)"></span>
+                <span class="sweep"><i></i></span>
+              </div>
               <div class="aiToolLog" x-show="aiToolActivity.length">
                 <div class="hd" x-text="t('ai_tool_activity')"></div>
                 <template x-for="(t, i) in aiToolActivity" :key="i">
-                  <div class="row"><span class="mono nm" x-text="t.name"></span><span x-text="t.detail"></span></div>
+                  <div class="row">
+                    <span class="tick">✓</span>
+                    <span class="mono nm" x-text="t.name"></span>
+                    <span x-text="t.detail"></span>
+                  </div>
                 </template>
               </div>
               <template x-if="aiAnalysis.status === 'error'">
                 <p class="sev-crit" x-text="aiAnalysis.error"></p>
               </template>
-              <template x-if="aiAnalysis.content">
-                <pre class="code" style="max-height:60vh; white-space:pre-wrap" x-text="aiAnalysis.content"></pre>
+              <template x-if="aiAnalysis.content || aiAnalysis.status === 'running'">
+                <pre class="code" style="max-height:60vh; white-space:pre-wrap"
+                     x-ref="aiOut" @scroll="onAIOutScroll()"><span x-text="aiAnalysis.content"></span><span
+                     class="aiCaret" x-show="aiAnalysis.status === 'running'"></span></pre>
               </template>
             </div>
           </template>
@@ -1743,6 +1794,9 @@ const I18N = {
   ai_testing:           { en: "Testing…",                                zh: "测试中…" },
   ai_test_ok:           { en: "Connected, models available",             zh: "连接成功，可用模型数" },
   ai_tool_activity:     { en: "Data the AI pulled",                      zh: "AI 主动查询的数据" },
+  ai_phase_connecting:  { en: "Contacting the AI provider…",             zh: "正在连接 AI 服务商…" },
+  ai_phase_thinking:    { en: "Reading scan data and reasoning…",        zh: "正在查阅扫描数据并推理…" },
+  ai_phase_writing:     { en: "Writing the analysis…",                   zh: "正在生成分析…" },
   btn_edit:             { en: "Edit",                                   zh: "编辑" },
   btn_save:             { en: "Save",                                   zh: "保存" },
   btn_cancel:           { en: "Cancel",                                 zh: "取消" },
@@ -1975,6 +2029,10 @@ function app() {
     aiFormOpen: false, aiForm: { id: "", name: "", host: "", api_key: "", model: "", kind: "openai", max_tokens: 8192 },
     aiFormModels: [], aiFormFetching: false, aiFormError: "",
     aiTesting: {}, aiTestResults: {}, aiPollTimer: null, aiToolActivity: [],
+    // Live-run indicators: an elapsed counter (the most reassuring signal
+    // during a long pause) and whether the output pane should keep
+    // following the tail as text streams in.
+    aiElapsed: 0, aiTickTimer: null, aiFollowTail: true,
     triageHistoryCache: {},
     reportLoadError: "", reportLoading: false, reportLoadProgress: 0,
     f: { sev:{critical:true,high:true,medium:true,low:true,info:true},
@@ -2770,6 +2828,9 @@ function app() {
         this.aiAnalysis && this.aiAnalysis.status === "running";
       if (!shouldPoll) { this.stopAIPolling(); return; }
       if (this.aiPollTimer) return; // already polling
+      // Watching someone else's live run: show the same activity indicators,
+      // with elapsed time measured from when that run actually started.
+      this.startAITicker(this.aiAnalysis.started_at);
       const jobId = this.selectedId;
       this.aiPollTimer = setInterval(async () => {
         // Bail out if the user moved on, or this tab became the owner of a
@@ -2781,12 +2842,16 @@ function app() {
           const j = await r.json();
           if (this.selectedId !== jobId || this.aiRunning) { this.stopAIPolling(); return; }
           this.aiAnalysis = j;
+          this.scrollAIOutToTail();
           if (j.status !== "running") this.stopAIPolling();
         } catch (e) { this.stopAIPolling(); }
       }, 1500);
     },
     stopAIPolling() {
       if (this.aiPollTimer) { clearInterval(this.aiPollTimer); this.aiPollTimer = null; }
+      // Nothing is being watched any more, so the clock should stop too --
+      // unless this tab is itself driving a run.
+      if (!this.aiRunning) this.stopAITicker();
     },
     // Jumps straight to a job's AI Analysis tab from the job-history list
     // (the button next to Delete), without the user having to open the
@@ -2812,6 +2877,8 @@ function app() {
       const jobId = this.selectedId;
       const isCurrent = () => this.selectedId === jobId;
       this.aiRunning = true; this.aiStreaming = false; this.aiError = ""; this.aiToolActivity = [];
+      this.aiFollowTail = true;
+      this.startAITicker();
       const providerMeta = this.aiProviders.find(p => p.id === this.aiSelectedProviderId) || {};
       this.aiAnalysis = { job_id: jobId, status: "running", content: "",
         provider_name: providerMeta.name || "", model: providerMeta.model || "" };
@@ -2842,6 +2909,7 @@ function app() {
             if (evt.type === "delta") {
               this.aiStreaming = true;
               this.aiAnalysis.content += evt.text;
+              this.scrollAIOutToTail();
             } else if (evt.type === "tool") {
               // The model is fetching more scan data. Shown as an activity
               // line so a multi-second tool round doesn't look like a hang.
@@ -2869,6 +2937,9 @@ function app() {
           // this tab stops being the owner but the run may still be live,
           // so hand over to polling rather than freezing on 'running'.
           this.syncAIPolling();
+          // Keep the clock running only while the analysis genuinely is:
+          // polling may still be watching a run this tab no longer drives.
+          if (!this.aiAnalysis || this.aiAnalysis.status !== "running") this.stopAITicker();
         }
       }
     },
@@ -2876,6 +2947,53 @@ function app() {
       const m = this.aiAnalysis && this.aiAnalysis.prompt_meta;
       if (!m || !m.truncated) return "";
       return `· ${this.t('ai_covered')} ${m.finding_count_sent}/${m.finding_count_total}`;
+    },
+    // What the run is doing right now. Distinguishing these three states
+    // matters because they have very different silent durations: waiting
+    // on a provider can be seconds, a tool round longer, and generation is
+    // the only one that visibly produces text.
+    get aiPhaseText() {
+      if (this.aiStreaming) return this.t('ai_phase_writing');
+      if (this.aiToolActivity.length) return this.t('ai_phase_thinking');
+      return this.t('ai_phase_connecting');
+    },
+    formatElapsed(sec) {
+      if (sec < 60) return `${sec}s`;
+      const m = Math.floor(sec / 60);
+      return `${m}m ${String(sec % 60).padStart(2, "0")}s`;
+    },
+    // startedAtISO lets a tab that is only *watching* someone else's run
+    // (see syncAIPolling) show the true elapsed time from the stored
+    // started_at, rather than counting from when this tab happened to open.
+    startAITicker(startedAtISO) {
+      this.stopAITicker();
+      let t0 = Date.now();
+      if (startedAtISO) {
+        const parsed = Date.parse(startedAtISO);
+        if (!isNaN(parsed)) t0 = parsed;
+      }
+      this.aiElapsed = Math.max(0, Math.floor((Date.now() - t0) / 1000));
+      this.aiTickTimer = setInterval(() => {
+        this.aiElapsed = Math.max(0, Math.floor((Date.now() - t0) / 1000));
+      }, 1000);
+    },
+    stopAITicker() {
+      if (this.aiTickTimer) { clearInterval(this.aiTickTimer); this.aiTickTimer = null; }
+    },
+    // Keep the newest text in view, but stop doing so the moment the user
+    // scrolls up to read something -- yanking the viewport back down while
+    // they're reading would be worse than not following at all.
+    onAIOutScroll() {
+      const el = this.$refs.aiOut;
+      if (!el) return;
+      this.aiFollowTail = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    },
+    scrollAIOutToTail() {
+      if (!this.aiFollowTail) return;
+      this.$nextTick(() => {
+        const el = this.$refs.aiOut;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
     },
     get vulnDBRows() {
       const rows = [];

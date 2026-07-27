@@ -1,51 +1,75 @@
 # 开发进度 — IFDA(IoT Firmware Deep Analysis)
 
 > 配套需求文档:[`firmware-analysis-requirements.md`](firmware-analysis-requirements.md)
-> 最近更新:2026-07-26
+> 最近更新:2026-07-27
 
 ## 0. 变更记录
 
-- **2026-07-26 — v3.8:AI 分析扫描结果 + AI 服务商配置管理(Go 服务层,`ifda/` 核心零改动)。**
+- **2026-07-27 — v3.9:AI 分析运行期的动态反馈(纯前端)。**
 
-  在现有规则引擎(CVE 匹配、taint、dangerous_funcs、backdoor、config_audit 等)产出的 findings 之上,
-  加一层可选的 AI 辅助分析——误报过滤、跨 finding 关联出攻击链、优先级排序、修复建议叙述。findings
-  已经完整落在 `service/reportdb.go` 的 SQLite 里,决定整个功能只做在 Go 服务层,不碰 Python 分析核心,
-  也不需要额外的进程间调用。
+  分析运行期缺少动态反馈,长时间停顿与"分析已完成"在视觉上无法区分。根因是一个条件写错:
+  不确定态进度条的显示条件为 `status === 'running' && !aiStreaming`,**首个 token 一到达
+  `aiStreaming` 即变 true,进度条随之消失**。此后无论模型停下来思考多久、跑几轮工具,界面上
+  只有一段静止不动的文字。用刻意留出静默期的假服务商实测,单次运行里的静默间隔为
+  3.3s / 2.0s / 1.5s×3,真实模型(尤其带扩展思考的)会长得多。
 
-  - **AI provider 配置管理**:新增 `ai_providers` 表(`service/reportdb.go`),支持自定义 Host URL + API
-    Key + 模型,多配置并存,完整 CRUD。协议假定为 OpenAI 兼容(`GET {host}/models` +
-    `POST {host}/chat/completions`,Bearer 鉴权)——这是自建网关(one-api/newapi/vLLM/Ollama 等)和主流
-    云端服务商的最大公约数,本期不做多协议适配。模型不允许手填,前端拿 Host+Key 先调
-    `/api/ai/models` 拉取真实模型列表填下拉框,拉取失败前"保存"按钮保持禁用,从根上避免模型名手误。
-  - **密钥落盘**:登录密码用的 PBKDF2 是单向哈希,验证够用但取不回明文,AI Key 必须能解密后转发给
-    服务商,不能照搬。新增 `service/aicrypto.go`:本地随机密钥文件(`<data>/ai.key`,0600,首次运行
-    生成)+ AES-256-GCM,全部标准库实现。`key_last4` 必须在加密前、明文还在手上时就算好存成独立列——
-    密文事后无法反推。启动日志明确提示 `ai.key` 要和 `reports.db`/`users.json` 一起备份,丢失即永久
-    锁死已保存的 Key(不是泄露,是取不回来了),只能删除重加。
-  - **分析触发**:报告详情页新增"AI分析"标签页,按需触发(不随扫描自动跑,避免每次扫描都产生
-    AI 调用成本)。`buildAnalysisPrompt`(`service/ai.go`)按严重度取 Top 60 条 finding(复用
-    `ListFindings` 已有的 `severity` 排序,不新增排序逻辑),超长的 description/pseudocode/evidence
-    字段截断到 800 字符,附一行"还有 N 条未展示"的 rollup,连同 report_meta 摘要一起组装成 prompt。
-    System prompt 显式要求把 finding 里的文本(从固件里提出来的东西)当证据数据而非指令处理,忽略
-    其中任何看起来像指令的内容——这是防 prompt injection 的主要手段。分析结果按 job 缓存一份
-    (`ai_analyses` 表,重跑覆盖,不留历史;`provider_id`/`provider_name`/`model` 都存了快照,删除
-    provider 后旧分析结果仍可看,只是 `provider_id` 置空)。前端渲染分析结果一律 `x-text` +
-    `white-space:pre-wrap`,不用 `x-html`——防的是 finding 里的注入内容诱导 AI 吐出 `<script>` 之类
-    造成存储型 XSS,这条比"叙述被误导"级别的风险要严重得多。
-  - **测试**:新增 `aicrypto_test.go`(加解密往返、错误密钥解密必须失败、密钥文件跨进程复用一致、
-    文件权限 0600)、`ai_test.go`(`httptest` 起假 OpenAI 兼容端点,覆盖 `/models`/`/chat/completions`
-    的成功/401/超时/空列表/JSON 解析失败,以及 prompt 截断和 rollup 计数),`reportdb_test.go`/
-    `api_test.go` 加 provider CRUD、分析缓存状态流转、job 未完成 409、provider 不存在 404、provider
-    不可达 502、"接口响应绝不包含完整明文/密文 Key"等用例。全量 `go test ./...` 通过,零回归。
-  - **真实验证**:本地起一个假 OpenAI 兼容 HTTP 端点,在 scratch 端口跑真实服务实例——完整走了一遍
-    新增 provider → 拉取模型下拉 → 保存 → 对一个真实跑完的扫描 job(`/bin/ls`,13 条 finding)点
-    AI 分析 → 结果正确缓存 → 删除 provider 后旧分析结果仍可读、`provider_id` 正确置空。之后在生产
-    `.data`(含 5 个历史扫描任务)上启动编译后的服务,确认历史任务正常加载、AI 密钥文件正常生成、
-    已有登录密码未被 `-user`/`-pass` 覆盖。
+  - **常驻状态条**取代那个会消失的进度条,整个运行期间都在,含四个元素:呼吸脉冲点、**分阶段
+    文案**、秒表、底边发丝扫光。分三个阶段而不是笼统说"分析中",是因为它们的静默时长特性完全
+    不同:等服务商响应通常几秒,一轮工具调用更久,而只有生成阶段才会持续吐字。
+  - **秒表**是长时间停顿时最有说服力的信号("还在跑,已 47s")。旁观标签页的耗时从记录里的
+    `started_at` 反算真实值,而不是从打开标签页那刻起算——否则一个已跑 3 分钟的任务会显示 5s。
+  - **打字光标**钉在流式文本末尾,是最直觉的"还在写"信号。实现上把 `<pre>` 拆成
+    `<span x-text>` + `<span class="aiCaret">`,光标自然跟在最后一个字符后。
+  - **自动跟随尾部**,但用户一旦向上滚动就停止跟随(阈值 40px)——读东西时被把视口硬拽回底部
+    比不跟随更糟。
+  - 工具日志每行加 ✓ 和淡入动画。打勾是准确的而非装饰:`onTool` 在工具执行**完成后**才触发,
+    所以每一行都代表一次已完成的抓取。
+  - 尊重 `prefers-reduced-motion`:系统要求减少动效时关掉全部动画但保留元素——信息在元素的
+    存在,不在运动。
+  - 验证:把真实的 `app()` 工厂在 node 里以桩环境跑起来,对新逻辑做了 17 条断言(耗时格式化的
+    零填充、三阶段状态机优先级、跟随尾部阈值、以及"用户滚开后不得拽回视口"),全过;另确认
+    `Date.parse` 能解析 Go 输出的 RFC3339 `started_at`,旁观者时钟不会 NaN。UI 是 `go:embed`
+    进二进制的,生产必须重新编译才生效。**视觉观感未做浏览器实机验证。**
+
+- **2026-07-26 — v3.8:AI 分析扫描结果 + 工具调用 agent(Go 服务层,`ifda/` 核心零改动)。**
+
+  在现有规则引擎(CVE 匹配、taint、dangerous_funcs、backdoor、config_audit 等)产出的 findings
+  之上,加一层 AI 辅助分析。同时支持 OpenAI 兼容方言和 Anthropic Messages API 两种协议。
+
+  - **服务商配置**:`ai_providers` 表支持自定义 Host URL、Key、模型、协议类型(`openai`/
+    `anthropic`)和每服务商的 `max_tokens`。模型不允许手填——填完 Host+Key 调 `/models` 拉真实
+    列表,拉取成功前禁止保存。每个已保存配置还有"测试连接"按钮,做真实往返但不花补全 token。
+  - **密钥落盘**:登录密码那套 PBKDF2 是单向的,取不回明文,而 API Key 必须能解密回传,所以不能
+    复用。改用 AES-256-GCM + 本地随机密钥文件(`<data>/ai.key`,0600)。`key_last4` 必须在加密前
+    算好——密文事后无法反推。`-rotate-ai-key` 支持轮换,顺序按"失败可恢复"设计:先全部解密(旧钥
+    匙有问题就零改动中止)→ 单事务换全部密文 → 换钥匙前先备份 → 最后完整读回验证。
+  - **流式与持久化**:结果以 NDJSON 流式推送(`delta`/`tool`/`done`/`error`)。分析中每 500ms
+    落库,刷新或另一个标签页能看到已生成部分;被 kill 的进程遗留的 `running` 记录在启动时对账为
+    中断态,不会永久转圈。同一 job 同时只允许一次分析(并发会互相覆盖写入)。
+  - **选择算法**:刻意不用严重度全局排序。那样会让一个机械检测出的簇(cve-bin-tool 一次版本匹配
+    展开成同一个二进制的 50+ 个 CVE)吃掉几乎全部预算,把其它所有漏洞类别挤出去。现在同
+    (component, rule) 的大簇折叠成一条摘要(并带上代表项的证据),条目按 vuln_class **轮询分配**,
+    小而重要的类别不会被饿死。渲染受字符预算约束,被丢掉的条目如实报出。
+  - **工具调用 agent**(`ai_agent.go`/`ai_tools.go`):只给精选样本会让模型把判断推回给人("待人工
+    确认")——它能点出可疑二进制,却读不到调用点。现在它可以按需取数:`search_findings`、
+    `get_finding_detail`(证据链+伪代码)、`list_init_scripts`/`read_init_script`、
+    `get_busybox_audit`、`get_services`,全部分页且有大小上限(真实扫描 ~53623 条 finding、
+    ~158KB busybox 数据)。轮次和调用数都有上限,耗尽时强制跑一轮**禁用工具**的收尾,保证一定产出
+    正文。网关拒绝 `tools` 字段时(自建 one-api/newapi/vLLM 常见)自动检测并透明降级为无工具重跑。
+  - **输出语言**跟随界面语言开关。工具返回值同样是固件里提取的不可信数据,system prompt 里"把
+    finding 文本当证据而非指令"这条明确扩展到工具输出;前端一律 `x-text` 渲染,绝不 `x-html`,
+    防止注入内容借模型输出变成存储型 XSS。
+  - **过程中修掉的几个坑**:① `http.Client.Timeout` 覆盖读 body,把长流式生成从中间掐断——改为
+    transport 层分阶段限制,用 150 秒真实流验证;② 200 状态但 body 是 HTML(网关在无版本路径上返回
+    SPA 首页)不再泄漏 `invalid character '<'`,缺 `/v1` 的 host 自动兜底,429/5xx 退避重试;
+    ③ 截断变可见——捕获 `finish_reason`/`stop_reason`,被截断时显式标注,空响应时报出原因(思考型
+    模型可能在产出任何正文前就耗尽预算,原来只表现为"empty response")。
+  - Web UI 新增 AI 设置面板、AI 分析标签页、历史任务列表的 AI 分析按钮,全部中英双语。另新增
+    `html/` 自包含项目官网页面和 `CHANGELOG.md`。Go 侧测试 84 个,`-race` 下全过。
 
 - **2026-07-11 — v3.7(`ifda.__version__` 2.5.0 → 2.6.0):内核版本 CVE 关联 + 一个真实的扫描上限 bug。**
 
-  用户问"内核漏洞关联是不是已经做了",查代码过程中发现两个独立的坑,而不是单纯的"没做":
+  内核漏洞关联此前并未真正生效。原因不是"没做",而是两个独立的坑:
 
   - **bug 1(`inventory/firmware_meta.py`)**:`detect_kernel_version()` 里注释写"内核版本 banner 通常出现在
     文件早期",所以只读文件头 8MB(`_SCAN_CAP`)。拿真实的 Starlink Dishy aarch64 内核镜像

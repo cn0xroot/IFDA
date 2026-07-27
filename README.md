@@ -275,6 +275,32 @@ persistence.
 Full technical detail (root causes, before/after numbers, test counts) is in
 [`PROGRESS.md`](PROGRESS.md)'s 变更记录 (Chinese). Feature-level summary:
 
+- **v3.9** — Live feedback while an AI analysis runs: a persistent status
+  strip (pulse, phase label, elapsed clock, hairline sweep), a blinking caret
+  on the streaming text, follow-the-tail output that yields to manual
+  scrolling, and `prefers-reduced-motion` support. Fixes a progress indicator
+  that vanished on the first token, leaving long pauses indistinguishable from
+  a finished analysis.
+- **v3.8** — AI-assisted analysis of scan results with a tool-calling agent.
+  Per-provider config (custom Host URL, key, model, OpenAI-compatible or
+  Anthropic protocol, max_tokens) with API keys encrypted at rest and a
+  rotation command. NDJSON streaming with partial-content persistence. The
+  model pulls scan data on demand — findings detail with evidence and
+  pseudocode, init.d scripts, BusyBox audit, network services — instead of
+  being fed a fixed sample, with automatic fallback for gateways lacking tool
+  support. Finding selection collapses near-identical clusters and allocates
+  round-robin across vulnerability classes so one CVE flood can't crowd out
+  every other class.
+- **v3.7** — Kernel-version CVE correlation using our own kernel detector
+  (cve-bin-tool's own checker fails on Ubuntu-style compiler strings). Fixed
+  an 8MB scan cap that silently missed kernel banners past that offset on
+  real 35MB images. Dirty Pipe is expressed as three branch-precise version
+  ranges so already-backported branches aren't misflagged.
+- **v3.6** — FR-VUL-4 coverage: path traversal (reusing the existing taint
+  engine with fopen/open/unlink/remove sinks) and auth-logic weakness
+  (non-constant-time credential comparison in auth-named functions).
+  Integer-overflow-into-alloc deliberately skipped as too noisy without
+  argument-level analysis.
 - **v3.5** — Static network service identification (WEB/SSH/FTP/Telnet/gSOAP/
   DNS/SNMP/UPnP/WiFi-management daemons); versions read only from embedded
   banner strings, never guessed; ports inferred from UCI config → inetd.conf
