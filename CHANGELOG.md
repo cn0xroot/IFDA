@@ -5,6 +5,58 @@ before/after numbers, test counts) lives in [`PROGRESS.md`](PROGRESS.md)'s
 变更记录 (Chinese). Entries for v3.5 and earlier are summarized in
 [`README.md`](README.md#changelog); this file continues from v3.6 onward.
 
+## v4.0 — 2026-07-27
+
+AI analysis reliability, plus cross-platform documentation.
+
+**Interrupted streams are no longer stored as complete**
+
+An analysis against a third-party Anthropic gateway was recorded as
+`status=done` while ending mid-sentence: 4505 chars of a much longer report,
+cut at `fgets() -> sub_11a8c`, with no error. The gateway had dropped the SSE
+stream mid-generation, sending neither a terminal `stop_reason`/`message_stop`
+(Anthropic) nor a `finish_reason`/`[DONE]` (OpenAI).
+
+Root cause: both stream parsers ended their read loop on `bufio.Scanner`, and
+`Scanner.Err()` reports `io.EOF` as a clean end (nil). A stream the upstream
+cut off at a chunk boundary therefore returned success with whatever partial
+text had arrived and an empty stop reason — so no truncation notice was
+appended and the agent loop persisted the fragment as the final answer. A
+well-formed stream always signals how it ended; the parsers now track that
+terminal marker (`sawDone` / `sawMessageStop`) and, when output was produced
+but neither a stop reason nor the marker was seen, return a new
+`errStreamInterrupted`. The existing error path already preserves the streamed
+partial content, so the run is now marked interrupted with an actionable
+message instead of a silent "done". Gateways that send the sentinel but omit
+the reason are still treated as complete, so terse-but-terminated answers do
+not misfire. Four regression tests cover both protocols; full suite passes
+under `-race`.
+
+**One scan's AI analysis no longer shows another scan's cached result**
+
+Opening the AI Analysis page for scan B could display scan A's analysis. The
+backend is keyed correctly by `job_id`; the leak was entirely in the frontend
+view state. `select()` reset `summary`, `tab` and other per-report fields on a
+job switch but never cleared `aiAnalysis`, so the previous job's analysis
+stayed on screen; and `loadAIAnalysis()` assigned its fetched result
+unconditionally after its awaits, so a slower fetch for a just-left job could
+clobber the current view. `select()` now clears the AI view state — guarded on
+an actual job change so re-selecting the current job never nulls an object a
+live run is streaming into — and `loadAIAnalysis()` captures the job id,
+applies the result only if that job is still selected, and skips the one-shot
+GET when this tab already owns the job's live stream.
+
+**Documentation**
+
+Platform support is now stated explicitly: ifda runs on Linux and macOS (Apple
+Silicon and Intel). Analysis is host-arch-independent (capstone disassembles
+the target arch directly) and the Go service builds natively via the pure-Go
+SQLite driver with no cgo — verified by cross-compiling the service for
+`darwin/arm64` and `darwin/amd64`. A "Running on macOS" guide covers the
+Homebrew toolchain, a venv Python install, the cgo-free service build, and
+Ghidra/JDK setup. Both READMEs also gained UI screenshots; `.gitignore` was
+broadened.
+
 ## v3.9 — 2026-07-27
 
 Live feedback while an AI analysis runs (frontend only).

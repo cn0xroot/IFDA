@@ -358,6 +358,13 @@ persistence.
 Full technical detail (root causes, before/after numbers, test counts) is in
 [`PROGRESS.md`](PROGRESS.md)'s 变更记录 (Chinese). Feature-level summary:
 
+- **v4.0** — AI analysis reliability + cross-platform docs. Interrupted
+  provider streams (no `[DONE]`/`finish_reason` or `message_stop`/`stop_reason`)
+  are now reported as interrupted, keeping the partial output, instead of being
+  stored as a finished analysis ending mid-sentence. Fixes one scan's AI page
+  showing another scan's cached analysis (stale frontend view state on job
+  switch). Documents Linux + macOS support (Apple Silicon and Intel) with a
+  macOS setup guide.
 - **v3.9** — Live feedback while an AI analysis runs: a persistent status
   strip (pulse, phase label, elapsed clock, hairline sweep), a blinking caret
   on the streaming text, follow-the-tail output that yields to manual
