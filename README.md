@@ -283,6 +283,32 @@ curl -F "file=@firmware.bin" localhost:8080/api/upload   # -> {"target": "...", 
 Triage states: `new | confirmed | false_positive | accepted_risk`. Re-submitting
 an unchanged target returns a cached result.
 
+### C. AI-assisted report analysis (optional)
+
+A static scan of a real firmware image easily produces tens of thousands of
+findings — most of them `strcpy`/`system` call sites with no proven input path.
+Reading that by hand is where the time goes. The service can hand a completed
+scan to an LLM that works through the findings *with tools*: it pulls evidence
+and pseudocode for the calls that look real, reads the init scripts and BusyBox
+applets to see what actually runs at boot, checks which services are network-
+reachable, and then writes up what's worth chasing and what's noise. In
+practice this cuts the false-positive triage down a lot and gets you to the
+handful of genuinely exploitable issues faster than scrolling the findings list.
+
+Set it up in the web UI under **AI settings**: add a provider (custom Host URL,
+API key, model), pick OpenAI-compatible or Anthropic protocol, and run the
+analysis from a finished scan's **AI Analysis** tab. Keys are encrypted at rest;
+results stream live and are saved to the database.
+
+It works with any OpenAI-compatible or Anthropic-protocol endpoint. If you can't
+reach the official APIs directly (common in mainland China) or just want cheaper
+access, a relay gateway works well — I run this against **Claude** (Opus /
+Sonnet) through [aihuangniu](https://sub2.aihuangniu.com/register?aff=W5J4XDFDEZZU),
+which is the gateway these AI features were tested on. Claude models in
+particular do a noticeably better job of grounding the analysis in the actual
+call sites instead of hand-waving. Any gateway that speaks the OpenAI or
+Anthropic wire format will do — the link is just the one I've been using.
+
 ### Output
 
 | Format | How | Contents |

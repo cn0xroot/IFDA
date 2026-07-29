@@ -260,6 +260,26 @@ curl -F "file=@firmware.bin" localhost:8080/api/upload   # -> {"target": "...", 
 分诊状态：`new | confirmed | false_positive | accepted_risk`。重复提交一个未变化的
 目标会直接返回缓存结果。
 
+### C. AI 辅助分析扫描报告（可选）
+
+一份真实固件的静态扫描,发现动辄上万条,其中大多是没有证实输入路径的
+`strcpy`/`system` 调用点。人工一条条看,时间基本都耗在这上面。服务可以把扫完的报告
+交给大模型,让它**带着工具**去过这些发现:对看着像真的调用点拉出证据和伪代码,读
+init 脚本和 BusyBox applet 看开机到底跑了什么,查哪些服务网络可达,最后写清楚哪些值得
+深挖、哪些是噪声。实际用下来,它能把误报的分诊工作量砍掉一大截,比自己滚动发现列表更快
+定位到那几个真正可利用的问题。
+
+在 Web UI 的 **AI 设置** 里配置:添加一个服务商(自定义 Host URL、API Key、模型),
+选 OpenAI 兼容或 Anthropic 协议,然后在扫描结果的 **AI 分析** 标签页里跑。密钥落盘加密,
+结果实时流式输出并存入数据库。
+
+它支持任何 OpenAI 兼容或 Anthropic 协议的接口。如果直连官方 API 不方便(国内很常见),
+或者只是想更便宜地用,走中转网关就行——我自己是通过
+[AI 黄牛](https://sub2.aihuangniu.com/register?aff=W5J4XDFDEZZU) 接 **Claude**(Opus /
+Sonnet)在用,这些 AI 功能也是在这个网关上测的。Claude 系模型尤其擅长把分析扎在真实
+调用点上,而不是泛泛而谈。任何能说 OpenAI 或 Anthropic 线格式的网关都可以——这个链接
+只是我一直在用的那个。
+
 ### 输出
 
 | 格式 | 方式 | 内容 |
