@@ -665,6 +665,7 @@
     <div class="eyebrow" data-i18n="install_eyebrow">快速开始</div>
     <h2 class="sec-title" data-i18n="install_title">几分钟内跑起第一次扫描</h2>
     <p class="sec-sub" data-i18n="install_sub">完整环境搭建(交叉编译器、Ghidra/JDK 踩坑记录)见仓库里的 ENVIRONMENT.md。</p>
+    <p class="sec-sub" style="margin-top:-8px" data-i18n="install_platform">Linux 和 macOS 都能跑,Apple 芯片和 Intel 都支持。分析跑在你自己的机器上,固件是 ARM 还是 MIPS 不影响。</p>
 
     <div class="grid c2">
       <div>
@@ -692,6 +693,20 @@ cd service &amp;&amp; go build -o ifda-service .
         </div>
       </div>
     </div>
+    <div class="callout" style="margin-top:8px">
+      <h4 data-i18n="install_mac_h">在 Mac 上</h4>
+      <p data-i18n="install_mac_d">把上面的 apt 换成 brew,其余照旧。Go 服务是纯 Go 写的,连 SQLite 都是,所以不用装 Xcode、也不用开 CGO,arm64 和 Intel 直接就能编。只有 Ghidra 反编译那一步要额外装个 JDK 17,不做反编译就跳过。</p>
+      <div class="codeblock" style="margin-top:12px">
+        <pre><span class="comment"># Homebrew:https://brew.sh</span>
+brew install python@3.12 go
+
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -e . cve-bin-tool
+
+<span class="comment"># 无需 CGO,arm64 / Intel 都能构建</span>
+cd service &amp;&amp; go build -o ifda-service .</pre>
+      </div>
+    </div>
     <div class="callout warn" style="margin-top:8px">
       <h4 data-i18n="install_warn_h">关于 cve-bin-tool 首次运行</h4>
       <p data-i18n="install_warn_d">它会在本机维护一份 NVD/OSV/RedHat/GitLab/Curl 的本地 CVE 数据库(约 1GB+),首次扫描会先同步这份数据,需要联网且较慢——之后的扫描直接复用本地缓存。缺失时分析仍会运行,只是 CVE 关联退化为内置的小型策展库,并在报告里给出明确提示。</p>
@@ -705,6 +720,8 @@ cd service &amp;&amp; go build -o ifda-service .
     <h2 class="sec-title" data-i18n="cl_title">最近几个版本</h2>
     <p class="sec-sub" data-i18n="cl_sub">完整记录见仓库里的 <span class="mono">CHANGELOG.md</span>(英文)与 <span class="mono">PROGRESS.md</span>(中文,含根因和验证细节)。</p>
     <div class="tl">
+      <div class="tl-item"><span class="v">v4.0</span><span class="d">2026-07-27</span><p data-i18n="cl_v40">AI 分析可靠性:被中断的服务商流不再当作"已完成"保存(保留部分输出并标为中断);修复打开一个扫描却显示另一个扫描缓存结果的问题;新增 Linux/macOS 跨平台说明与 Mac 安装步骤。</p></div>
+      <div class="tl-item"><span class="v">v3.9</span><span class="d">2026-07-27</span><p data-i18n="cl_v39">AI 分析运行期的动态反馈:常驻状态条(脉冲点、分阶段文案、秒表、发丝扫光)、流式打字光标、自动跟随尾部并让位于手动滚动。</p></div>
       <div class="tl-item"><span class="v">v3.8</span><span class="d">2026-07-26</span><p data-i18n="cl_v38">AI 分析扫描结果 + AI 服务商配置管理,全部在 Go 服务层实现,Python 核心零改动。</p></div>
       <div class="tl-item"><span class="v">v3.7</span><span class="d">2026-07-11</span><p data-i18n="cl_v37">内核版本 CVE 关联(Dirty COW / Dirty Pipe 精确区间匹配)+ 修复内核 banner 扫描上限截断 bug。</p></div>
       <div class="tl-item"><span class="v">v3.6</span><span class="d">2026-07-11</span><p data-i18n="cl_v36">新增路径遍历检测(复用污点引擎)与鉴权逻辑弱点检测(非常量时间比较识别)。</p></div>
@@ -892,6 +909,9 @@ const I18N = {
 
   install_eyebrow:{en:"Quick Start",zh:"快速开始"}, install_title:{en:"Run your first scan in a few minutes",zh:"几分钟内跑起第一次扫描"},
   install_sub:{en:"Full environment setup (cross-compilers, Ghidra/JDK pitfalls) is in the repo's ENVIRONMENT.md.",zh:"完整环境搭建(交叉编译器、Ghidra/JDK 踩坑记录)见仓库里的 ENVIRONMENT.md。"},
+  install_platform:{en:"Runs on Linux and macOS, Apple Silicon or Intel. The analysis runs on your own machine, so it doesn't matter whether the firmware is ARM or MIPS.",zh:"Linux 和 macOS 都能跑,Apple 芯片和 Intel 都支持。分析跑在你自己的机器上,固件是 ARM 还是 MIPS 不影响。"},
+  install_mac_h:{en:"On a Mac",zh:"在 Mac 上"},
+  install_mac_d:{en:"Swap the apt line above for brew and the rest is the same. The Go service is pure Go — SQLite included — so it builds with no Xcode and no CGO on both arm64 and Intel. Only the Ghidra decompile step needs a JDK 17; skip it if you're not decompiling.",zh:"把上面的 apt 换成 brew,其余照旧。Go 服务是纯 Go 写的,连 SQLite 都是,所以不用装 Xcode、也不用开 CGO,arm64 和 Intel 直接就能编。只有 Ghidra 反编译那一步要额外装个 JDK 17,不做反编译就跳过。"},
   install_cli_h:{en:"1 · Analysis core",zh:"1 · 分析核心"}, install_svc_h:{en:"2 · Service layer (optional — REST API + Web UI)",zh:"2 · 服务层(可选，REST API + Web UI)"},
   install_warn_h:{en:"About cve-bin-tool's first run",zh:"关于 cve-bin-tool 首次运行"},
   install_warn_d:{en:"It maintains its own local CVE database (NVD/OSV/RedHat/GitLab/Curl, ~1GB+) — the first scan on a machine syncs it and needs network access, so expect it to be slow; later scans reuse the local cache. Without it, analysis still runs, just with CVE correlation degraded to the small built-in curated DB, with a clear warning in the report.",
@@ -900,6 +920,8 @@ const I18N = {
   cl_eyebrow:{en:"Changelog",zh:"更新日志"}, cl_title:{en:"Recent versions",zh:"最近几个版本"},
   cl_sub:{en:'Full history is in the repo\'s <span class="mono">CHANGELOG.md</span> (English) and <span class="mono">PROGRESS.md</span> (Chinese, with root causes and verification detail).',
           zh:'完整记录见仓库里的 <span class="mono">CHANGELOG.md</span>(英文)与 <span class="mono">PROGRESS.md</span>(中文，含根因和验证细节)。'},
+  cl_v40:{en:"AI analysis reliability: an interrupted provider stream is no longer stored as \"done\" (partial output kept, marked interrupted); fixed one scan showing another scan's cached result; added Linux/macOS platform notes and Mac setup steps.",zh:"AI 分析可靠性:被中断的服务商流不再当作\"已完成\"保存(保留部分输出并标为中断);修复打开一个扫描却显示另一个扫描缓存结果的问题;新增 Linux/macOS 跨平台说明与 Mac 安装步骤。"},
+  cl_v39:{en:"Live feedback during an AI run: a persistent status strip (pulse, phase label, elapsed clock, sweep), a streaming caret, and follow-the-tail output that yields to manual scrolling.",zh:"AI 分析运行期的动态反馈:常驻状态条(脉冲点、分阶段文案、秒表、发丝扫光)、流式打字光标、自动跟随尾部并让位于手动滚动。"},
   cl_v38:{en:"AI-assisted analysis of scan results + AI provider config management, entirely in the Go service layer, zero changes to the Python core.",zh:"AI 分析扫描结果 + AI 服务商配置管理，全部在 Go 服务层实现，Python 核心零改动。"},
   cl_v37:{en:"Kernel-version CVE correlation (precise Dirty COW / Dirty Pipe range matching) + fixed a kernel-banner scan-cap truncation bug.",zh:"内核版本 CVE 关联(Dirty COW / Dirty Pipe 精确区间匹配)+ 修复内核 banner 扫描上限截断 bug。"},
   cl_v36:{en:"Added path-traversal detection (reusing the taint engine) and auth-logic-weakness detection (non-constant-time comparison).",zh:"新增路径遍历检测(复用污点引擎)与鉴权逻辑弱点检测(非常量时间比较识别)。"},
