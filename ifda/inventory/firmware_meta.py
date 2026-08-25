@@ -266,6 +266,29 @@ def scan_tree_stats(target: str, max_entries: int = 200000) -> tuple[int, int]:
     return count, total
 
 
+def top_level_dir_breakdown(files, target: str) -> list[dict]:
+    """Groups `files` (anything with .path/.size, e.g. report.files) by the
+    top-level directory under `target` -- "/usr", "/etc", "/root", etc. --
+    for the rootfs-composition pie chart on the dashboard (FR-INV). A file
+    that sits directly at the rootfs root (no subdirectory) is bucketed
+    under "/" itself. Returned sorted largest-first."""
+    totals: dict[str, int] = {}
+    for f in files:
+        rel = os.path.relpath(f.path, target)
+        top = rel.split(os.sep, 1)[0]
+        label = "/" if top in ("", os.curdir) else "/" + top
+        totals[label] = totals.get(label, 0) + max(f.size, 0)
+
+    grand_total = sum(totals.values())
+    breakdown = [
+        {"name": name, "bytes": size,
+         "pct": (size / grand_total * 100.0) if grand_total else 0.0}
+        for name, size in totals.items()
+    ]
+    breakdown.sort(key=lambda d: d["bytes"], reverse=True)
+    return breakdown
+
+
 def summarize_arch_endian(archs: list[str], endians: list[str]) -> tuple[str, str]:
     """Majority architecture/endianness across a report's binaries -- a
     single overall label for the dashboard, not a per-binary breakdown

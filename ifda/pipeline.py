@@ -29,7 +29,7 @@ from .vuln.cve import extract_sbom, correlate_kernel_cve
 from .vuln.crossbinary import detect_cross_binary_taint
 from .inventory import (
     scan_secrets, detect_kernel_version, list_all_files, summarize_arch_endian, audit_busybox,
-    count_certificates, detect_services,
+    count_certificates, detect_services, top_level_dir_breakdown,
 )
 from .scripts import scan_scripts, scan_lang_scripts, list_scripts, list_lang_scripts
 from .fs import scan_filesystem
@@ -121,10 +121,12 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     slow and degrades to a no-op if Ghidra is not installed.
     """
 
-    def emit(stage: str, pct: float, detail: str = "") -> None:
+    def emit(stage: str, pct: float, detail: str = "", **extra) -> None:
         if progress:
             try:
-                progress({"stage": stage, "pct": int(round(pct)), "detail": detail})
+                payload = {"stage": stage, "pct": int(round(pct)), "detail": detail}
+                payload.update(extra)
+                progress(payload)
             except Exception:
                 pass
 
@@ -140,15 +142,23 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
 
     units = []
     for i, path in enumerate(paths):
-        emit("disassemble", 5 + 70.0 * i / total, path)
         info, findings, disasm = _analyze_unit(path)
+        # Emitted after (not before) the unit is analyzed, so `arch` is
+        # actually known here -- feeds the web UI's live "binaries processed
+        # so far, by architecture" progress chart (FR-INV), the one part of
+        # a scan's composition that's genuinely known incrementally
+        # throughout the disassemble stage's ~70% of total wall time,
+        # unlike file kind (binary/script/config/other), which only becomes
+        # known in the "files" stage at the very end.
+        emit("disassemble", 5 + 70.0 * (i + 1) / total, path, arch=info.arch,
+             done=i + 1, total=total)
         report.binaries.append(info)
         report.findings.extend(findings)
         units.append((info, disasm))
 
     # Global cross-binary taint over the whole set (FR-VUL-5).
     if len(units) > 1:
-        emit("cross-binary", 78, "linking call graphs")
+        emit("cross-binary", 76, "linking call graphs")
         try:
             report.findings.extend(detect_cross_binary_taint(units))
         except Exception as e:
@@ -159,7 +169,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     # Advisory/Curl correlation across 350+ components — one tree-level pass,
     # not per binary, since cve-bin-tool has its own checkers/version sniffers
     # and manages its own local CVE database.
-    emit("cve-scan", 80, "cve-bin-tool component/CVE scan")
+    emit("cve-scan", 77, "cve-bin-tool component/CVE scan")
     cvebin_components: list[ComponentInfo] = []
     if cve_bin_tool_available():
         try:
@@ -174,14 +184,14 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
             "CVE coverage limited to the small built-in banner DB")
 
     # Embedded secrets / credentials across the whole tree (FR-INV-4).
-    emit("secrets", 84, "scanning for keys/credentials")
+    emit("secrets", 78, "scanning for keys/credentials")
     try:
         report.findings.extend(scan_secrets(target))
     except Exception:
         pass
 
     # Shell / CGI script command-injection analysis (FR-INV-3 + FR-VUL).
-    emit("scripts", 90, "shell/CGI command injection")
+    emit("scripts", 79, "shell/CGI command injection")
     try:
         report.findings.extend(scan_scripts(target))
         for p in list_scripts(target):
@@ -190,7 +200,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
         pass
 
     # PHP / Python / Lua script injection (FR-INV-3 + FR-VUL).
-    emit("scripts-lang", 92, "php/python/lua injection")
+    emit("scripts-lang", 80, "php/python/lua injection")
     try:
         report.findings.extend(scan_lang_scripts(target))
         for p, lang in list_lang_scripts(target):
@@ -199,7 +209,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
         pass
 
     # Filesystem hardening / config checks (FR-INV / attack surface).
-    emit("filesystem", 95, "hardening checks")
+    emit("filesystem", 81, "hardening checks")
     try:
         report.findings.extend(scan_filesystem(target))
     except Exception:
@@ -211,14 +221,14 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     # (permission bits) and scan_secrets (hardcoded credential values), since
     # neither notices a config file with sane permissions and no literal
     # secret that still leaves an insecure service turned on by default.
-    emit("config-audit", 96, "config file hardening checks")
+    emit("config-audit", 82, "config file hardening checks")
     try:
         report.findings.extend(scan_configs(target))
     except Exception:
         pass
 
     # Non-busybox command / suspected backdoor scan (FR-VUL).
-    emit("backdoor", 97, "non-busybox command scan")
+    emit("backdoor", 83, "non-busybox command scan")
     try:
         report.findings.extend(scan_backdoors(target))
     except Exception:
@@ -230,7 +240,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     # in the tree (configs, web assets, data files, symlinks) too. Also
     # doubles as the source for file_count/firmware_size below (one walk of
     # the tree, not two).
-    emit("files", 98, "building full file listing")
+    emit("files", 84, "building full file listing")
     try:
         binary_paths = {b.path for b in report.binaries}
         script_paths = {s.path for s in report.scripts}
@@ -255,7 +265,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     # this busybox build actually compiled in vs a reference applet list
     # ("missing" = crippled), what else lives in bin/sbin across every such
     # directory in the tree, and every init.d script's source.
-    emit("busybox-audit", 98, "busybox applet audit")
+    emit("busybox-audit", 84, "busybox applet audit")
     try:
         busybox_paths = [b.path for b in report.binaries if os.path.basename(b.path) == "busybox"]
         file_kind_map = {f.path: f.kind for f in report.files}
@@ -267,7 +277,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     # Telnet/SOAP/DNS/SNMP/UPnP/WiFi-management daemon is actually present,
     # its version (from an embedded banner, not guessed), and its inferred
     # listening port(s) -- see inventory/service_id.py for the full chain.
-    emit("service-id", 98, "network service identification")
+    emit("service-id", 85, "network service identification")
     try:
         report.services = detect_services(target)
     except Exception:
@@ -276,7 +286,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
     # Firmware-level summary for the dashboard (FR-INV): kernel version
     # banner, majority arch/endian across the binaries just analyzed, and
     # total scanned file count/size (from the listing just built above).
-    emit("firmware-meta", 99, "firmware summary")
+    emit("firmware-meta", 86, "firmware summary")
     try:
         report.kernel_version = detect_kernel_version(target)
         report.arch_summary, report.endian_summary = summarize_arch_endian(
@@ -284,6 +294,7 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
         report.file_count = len(report.files)
         report.firmware_size = sum(f.size for f in report.files)
         report.cert_count, report.rsa_cert_count = count_certificates(target)
+        report.dir_breakdown = top_level_dir_breakdown(report.files, target)
     except Exception:
         pass
 
@@ -374,16 +385,27 @@ def analyze(target: str, triage_path: str | None = None, progress=None,
                         for fut in concurrent.futures.as_completed(futures):
                             done += 1
                             info = futures[fut]
-                            emit("decompile", 97 + 3.0 * done / len(targets),
-                                 f"{done}/{len(targets)} {info.path}")
+                            # 85 (right after firmware-meta) -> 99, not the old
+                            # 97 -> 100: decompile is the one stage whose own
+                            # cost can dwarf everything before it (each Ghidra
+                            # target is a real per-file subprocess run, and
+                            # `targets` here can be in the hundreds), so a
+                            # fixed 3-point budget made the bar look stuck at
+                            # 97-98% for most of a --decompile run -- worse,
+                            # it used to *start* at 97, below firmware-meta's
+                            # 99 just before it, so the bar visibly jumped
+                            # backward the moment decompile began.
+                            emit("decompile", 86 + 13.0 * done / len(targets),
+                                 f"{done}/{len(targets)} {info.path}",
+                                 done=done, total=len(targets))
                             try:
                                 fut.result()
                             except Exception as e:
                                 info.warnings.append(f"decompile failed: {e}")
                 else:
-                    emit("decompile", 97, "no findings need decompilation")
+                    emit("decompile", 86, "no findings need decompilation")
             elif report.binaries:
-                emit("decompile", 97, "ghidra not found")
+                emit("decompile", 86, "ghidra not found")
                 report.binaries[0].warnings.append(
                     "decompilation requested but Ghidra not found (set GHIDRA_HOME)")
         except Exception as e:

@@ -75,6 +75,53 @@ func TestDedupCacheDoesNotServeStaleAnalyzerVersion(t *testing.T) {
 	}
 }
 
+// force=true (the web UI's "re-scan" button) must bypass the dedup cache
+// even when a valid cache-hit is available -- otherwise "re-scan" would
+// silently CopyJob the same stale report back, which is exactly the bug
+// this button exists to let a user route around (e.g. an old report that
+// predates a report field the analyzer has since started emitting).
+func TestSubmitForceBypassesDedupCache(t *testing.T) {
+	dataDir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "firmware.bin")
+	if err := os.WriteFile(target, []byte("fw content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(filepath.Join(dataDir, "jobs"), "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := store.Create(target, false)
+	store.update(prev.ID, func(j *Job) {
+		j.Status = StatusCompleted
+		j.AnalyzerVersion = "v1"
+	})
+	store.cacheStore(store.dedupKey(target), prev.ID)
+	if _, ok := store.cacheLookup(store.dedupKey(target)); !ok {
+		t.Fatal("sanity check failed: store should cache-hit the just-completed job")
+	}
+
+	// Bare Worker, no NewWorker (which spins up goroutines that would try to
+	// exec a real python3 subprocess for anything landing on the queue) --
+	// only Submit's cache-bypass decision is under test here.
+	w := &Worker{store: store, queue: make(chan string, 1)}
+	job := store.Create(target, false)
+	w.Submit(job, true)
+
+	select {
+	case id := <-w.queue:
+		if id != job.ID {
+			t.Errorf("queued id = %q, want %q", id, job.ID)
+		}
+	default:
+		t.Error("force=true should have pushed straight onto the queue instead of taking the cache-hit path")
+	}
+	// Must not have been resolved as a cache hit in the meantime.
+	if got, _ := store.Get(job.ID); got.CacheHit {
+		t.Error("force=true job must not be marked CacheHit")
+	}
+}
+
 func TestDedupKeyChangesWithAnalyzerVersion(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "firmware.bin")
 	if err := os.WriteFile(target, []byte("fw content"), 0o644); err != nil {

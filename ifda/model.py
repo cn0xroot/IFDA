@@ -55,6 +55,12 @@ class Function:
     calls: list[str] = field(default_factory=list)
     # Imported/library calls reached from this function (e.g. "strcpy").
     callees_imported: list[str] = field(default_factory=list)
+    # Compare-scan function diff (FR-INV): a content fingerprint over the
+    # function body's mnemonic histogram (operand-independent -- register
+    # allocation/immediate differences alone don't flip it), so two scans of
+    # the same source recompiled with the same toolchain hash identically,
+    # while a real logic change usually doesn't. See ifda/re/disasm.py.
+    fingerprint: str = ""
 
 
 @dataclass
@@ -272,6 +278,12 @@ class AnalysisReport:
     # the way an embedded private key is).
     cert_count: int = 0
     rsa_cert_count: int = 0
+    # Rootfs directory-composition pie chart (FR-INV dashboard visual):
+    # on-disk byte share per top-level directory ("/usr", "/etc", ...), and
+    # which renderer actually produced the chart PNG ("cuda"/"cpu"/"" if no
+    # --chart output was requested) -- see report/piechart.py.
+    dir_breakdown: list = field(default_factory=list)
+    dir_chart_renderer: str = ""
 
 
 def to_dict(obj) -> dict:

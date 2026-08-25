@@ -143,6 +143,7 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs/{id}", a.auth(a.getJob))
 	mux.HandleFunc("GET /api/jobs/{id}/report", a.auth(a.getReport))
 	mux.HandleFunc("GET /api/jobs/{id}/summary", a.auth(a.getSummary))
+	mux.HandleFunc("GET /api/jobs/{id}/dir-chart", a.auth(a.getDirChart))
 	mux.HandleFunc("GET /api/jobs/{id}/findings", a.auth(a.getFindings))
 	mux.HandleFunc("GET /api/jobs/{id}/binaries", a.auth(a.getBinaries))
 	mux.HandleFunc("GET /api/jobs/{id}/binary", a.auth(a.getBinary))
@@ -161,6 +162,7 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/jobs/batch-delete", a.auth(a.batchDeleteJobs))
 	mux.HandleFunc("GET /api/triage/history", a.auth(a.triageHistory))
 	mux.HandleFunc("GET /api/vulndb", a.auth(a.getVulnDB))
+	mux.HandleFunc("POST /api/chart/pie", a.auth(a.renderPieChart))
 	mux.HandleFunc("POST /api/upload", a.auth(a.upload))
 	mux.HandleFunc("GET /api/ai/providers", a.auth(a.listAIProviders))
 	mux.HandleFunc("POST /api/ai/providers", a.auth(a.createAIProvider))
@@ -264,6 +266,12 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 type createReq struct {
 	Target    string `json:"target"`
 	Decompile bool   `json:"decompile"`
+	// Force skips the dedup cache (Store.cacheLookup) even for a
+	// byte-identical target already scanned before -- the "re-scan" button
+	// in the web UI sets this, since a plain resubmit of the same target
+	// would otherwise just CopyJob the old cached report verbatim, which is
+	// the opposite of what "re-scan" is asking for.
+	Force bool `json:"force"`
 }
 
 func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +290,7 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job := a.store.Create(req.Target, req.Decompile)
-	a.worker.Submit(job)
+	a.worker.Submit(job, req.Force)
 	writeJSON(w, http.StatusAccepted, job)
 }
 
@@ -355,6 +363,31 @@ func (a *API) getSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// getDirChart serves the rootfs directory-composition pie chart PNG rendered
+// by ifda/report/piechart.py during analysis (GPU-rasterized via CUDA when a
+// device is available, CPU-rendered via Pillow otherwise — see that module).
+// No Content-Disposition: unlike getReport/getBinaries downloads, this is
+// meant to be displayed inline by an <img> tag on the dashboard.
+func (a *API) getDirChart(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.store.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != StatusCompleted || job.chartPath == "" {
+		writeErr(w, http.StatusConflict, "chart not ready (job "+string(job.Status)+")")
+		return
+	}
+	data, err := os.ReadFile(job.chartPath)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "chart not available")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(data)
 }
 
 // getFindings serves one page of findings, filtered/sorted server-side —
@@ -731,6 +764,66 @@ func (a *API) getVulnDB(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(doc)
+}
+
+// renderPieChart is stateless (no job involved) -- unlike getDirChart, whose
+// PNG is produced once during analysis and served from disk, this renders
+// on demand from whatever named-value slices the caller sends, e.g. the
+// compare-scan function-diff's added/removed/modified/unchanged counts
+// (client-side, since that diff is computed in the browser from two jobs'
+// already-fetched reports -- see runCompare() in the web UI). Shells out to
+// `python3 -m ifda.cli chart`, which tries CUDA and falls back to CPU (see
+// ifda/report/piechart.py); a short timeout is enough either way -- a
+// dozen-wedge chart renders in well under a second on either path.
+func (a *API) renderPieChart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Slices []map[string]any `json:"slices"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if len(req.Slices) == 0 {
+		writeErr(w, http.StatusBadRequest, "slices must be non-empty")
+		return
+	}
+
+	tmp, err := os.MkdirTemp("", "ifda-chart-")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer os.RemoveAll(tmp)
+
+	inPath := filepath.Join(tmp, "slices.json")
+	outPath := filepath.Join(tmp, "chart.png")
+	inBytes, err := json.Marshal(req.Slices)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.WriteFile(inPath, inBytes, 0o644); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "python3", "-m", "ifda.cli", "chart", inPath, outPath)
+	cmd.Dir = a.coreDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "chart render failed: "+err.Error()+": "+string(out))
+		return
+	}
+
+	png, err := os.ReadFile(outPath)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "chart output missing")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(png)
 }
 
 func (a *API) pauseJob(w http.ResponseWriter, r *http.Request) {

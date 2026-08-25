@@ -12,11 +12,18 @@ dependencies = [
     "pyelftools>=0.29",
     "cve-bin-tool>=3.4",
     "cryptography>=41.0",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]
 # Heavier engines wrapped opportunistically; the core degrades gracefully without them.
 taint = ["angr>=9.2"]
+# GPU-accelerated rootfs dir-breakdown pie chart rendering. Optional: the
+# renderer probes for a usable CUDA device at runtime and falls back to CPU
+# (Pillow, already a core dependency) automatically when this isn't
+# installed or no GPU is present. Pick the cupy wheel matching the local
+# CUDA toolkit version, e.g. cupy-cuda12x for CUDA 12.x.
+cuda = ["cupy-cuda12x>=12.0"]
 
 [project.scripts]
 ifda = "ifda.cli:main"

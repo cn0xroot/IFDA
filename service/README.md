@@ -35,6 +35,28 @@ auto-detected by walking up from cwd), `-workers` (concurrent analyses, default
 Requires `python3` with the `ifda` package importable from `-core` (i.e. the
 core's deps installed: `python3-capstone python3-pyelftools`).
 
+### Production launch
+
+`service/start.sh` runs the real deployment: `./ifda-service -addr :8080 -user admin
+-pass ifda@2026 -data ./.data`. No `-core` — it relies on auto-detect, so this only
+works run from inside the repo (or a subdirectory of it), same as any other invocation
+with `-core` omitted. `-data` matters: `./.data` is where the real job history/AI
+provider config/user accounts actually live — pointing this at a different or missing
+directory silently starts the service on an empty or stale database instead of
+erroring (see PROGRESS.md's 2026-08-25 entries). The `-pass` here only seeds `admin`
+on an account that doesn't have a password yet; it does **not** mean that's the
+current password (see the section below) — do not assume it.
+
+**Restarting kills any job that's currently running — it does not survive as an
+orphaned process.** Don't assume an in-flight `python3 -m ifda.cli analyze` subprocess
+will keep running independently after the parent `ifda-service` process is killed; in
+practice it gets torn down along with it (observed even though the subprocess is
+launched in its own process group via `Setpgid: true`, which in theory should isolate
+it from a plain `kill <pid>` on the parent — most likely a host-level cgroup/session
+teardown rather than anything `job.go` itself does; see PROGRESS.md's 2026-08-25 entry
+for the full writeup). Check for a running job before restarting; there's no partial
+report to recover afterward.
+
 ### Auth flags: `-auth` / `-user` / `-pass` / `-reset-pass`
 
 `-auth` defaults to `true` (login required). `-user`/`-pass` only **seed** an

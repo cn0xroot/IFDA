@@ -1,6 +1,7 @@
 """CLI entrypoint (FR-RE-7 scriptable surface / FR-INT-1 precursor).
 
-    ifda analyze <path> [--json out.json] [--md out.md] [--triage triage.json]
+    ifda analyze <path> [--json out.json] [--md out.md] [--chart out.png] [--triage triage.json]
+    ifda chart <slices.json> <out.png>
     ifda triage <triage.json> <finding_id> <state>
 """
 
@@ -11,7 +12,7 @@ import json
 import sys
 
 from .pipeline import analyze
-from .report import write_json, render_markdown, render_cyclonedx
+from .report import write_json, render_markdown, render_cyclonedx, render_dir_pie_chart, render_pie_chart
 from .report.json_report import to_json_str
 from .model import TriageState
 from .vuln import TriageStore
@@ -30,6 +31,11 @@ def _cmd_analyze(args) -> int:
 
     report = analyze(args.target, triage_path=args.triage, progress=progress,
                      decompile=args.decompile)
+
+    if args.chart:
+        # Runs before write_json below so the renderer actually used ("cuda"
+        # or "cpu") is captured in the JSON report too.
+        report.dir_chart_renderer = render_dir_pie_chart(report.dir_breakdown, args.chart)
 
     if args.json:
         write_json(report, args.json)
@@ -50,6 +56,17 @@ def _cmd_analyze(args) -> int:
             f"{len(report.findings)} findings ({crit} high/critical).",
             file=sys.stderr,
         )
+    return 0
+
+
+def _cmd_chart(args) -> int:
+    """Renders an arbitrary named-slice pie chart (compare-scan function-diff
+    counts, or anything else outside a full `analyze` run) -- CUDA if a
+    device is available, CPU otherwise. See ifda/report/piechart.py."""
+    with open(args.slices) as fh:
+        slices = json.load(fh)
+    renderer = render_pie_chart(slices, args.out)
+    print(json.dumps({"renderer": renderer}))
     return 0
 
 
@@ -92,12 +109,18 @@ def main(argv=None) -> int:
     a.add_argument("--json", help="write JSON report to this path")
     a.add_argument("--md", help="write Markdown report to this path")
     a.add_argument("--sbom", help="write CycloneDX SBOM JSON to this path")
+    a.add_argument("--chart", help="write rootfs directory-composition pie chart PNG to this path")
     a.add_argument("--triage", help="triage state JSON (read + apply)")
     a.add_argument("--progress", action="store_true",
                    help="emit @@IFDA@@<json> progress events on stderr")
     a.add_argument("--decompile", action="store_true",
                    help="enrich findings with Ghidra pseudocode (slow; needs Ghidra)")
     a.set_defaults(func=_cmd_analyze)
+
+    c = sub.add_parser("chart", help="render a named-slice pie chart PNG (CUDA if available, CPU otherwise)")
+    c.add_argument("slices", help="JSON file: [{\"name\": ..., \"value\": ...}, ...]")
+    c.add_argument("out", help="output PNG path")
+    c.set_defaults(func=_cmd_chart)
 
     t = sub.add_parser("triage", help="set triage state for a finding")
     t.add_argument("store", help="triage state JSON file")

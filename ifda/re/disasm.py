@@ -9,6 +9,8 @@ elsewhere (a warning is recorded on the BinaryInfo when limited).
 
 from __future__ import annotations
 
+import hashlib
+from collections import Counter
 from dataclasses import dataclass, field
 
 import capstone
@@ -58,6 +60,25 @@ def _cs_for(info: BinaryInfo):
     else:
         mode |= CS.CS_MODE_LITTLE_ENDIAN
     return arch, mode
+
+
+def _mnemonic_fingerprint(mnem_counts: Counter) -> str:
+    """Stable identity for a function body, for the compare-scan function
+    diff (FR-INV): sorted "mnemonic:count" pairs, hashed. Order-independent
+    (a function's instructions counted as a bag, not a sequence) and
+    operand-independent (mnemonics only) -- deliberately coarse so harmless
+    compiler noise (register allocation, literal pool placement) doesn't
+    register as "modified", at the cost of not catching a same-mnemonic
+    operand-only change (e.g. a swapped immediate). Two independent scans of
+    byte-identical code always produce the same fingerprint; an empty
+    function (no instructions decoded) gets "" rather than a hash of nothing,
+    so it never spuriously matches another empty function found via a
+    different fallback path.
+    """
+    if not mnem_counts:
+        return ""
+    parts = ",".join(f"{m}:{n}" for m, n in sorted(mnem_counts.items()))
+    return hashlib.sha256(parts.encode()).hexdigest()[:16]
 
 
 def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmResult:
@@ -143,6 +164,7 @@ def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmRes
             if not code:
                 continue
             fn = Function(name=name, address=start, size=size)
+            mnem_counts: Counter = Counter()
             if mips:
                 mips.reset(start)
             if arm_res:
@@ -162,6 +184,10 @@ def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmRes
             else:
                 insns = ((i, False) for i in md.disasm(code, start))
             for insn, is_thumb in insns:
+                # Compare-scan function diff (FR-INV): a content fingerprint
+                # independent of the call-edge extraction below, so it counts
+                # every instruction in the function body, not just calls.
+                mnem_counts[insn.mnemonic] += 1
                 indirect = mips.feed(insn) if mips else None
                 # ARM tail-calls / interworking veneers (b.w / bx <reg>) become
                 # call edges so the call graph stays connected through veneers.
@@ -187,6 +213,7 @@ def disassemble(path: str, info: BinaryInfo, max_funcs: int = 4000) -> DisasmRes
                     fn.calls.append(callee)
                     if imported:
                         fn.callees_imported.append(callee)
+            fn.fingerprint = _mnemonic_fingerprint(mnem_counts)
             result.functions.append(fn)
 
     return result

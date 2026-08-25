@@ -130,6 +130,7 @@
      to compute an honest percentage from, so this is a sliding animation
      rather than a numeric progress bar). */
   .bar.indeterminate > span { width:30%; transition:none; animation:barSlide 1.1s ease-in-out infinite; }
+  .bar.sub { height:3px; } .bar.sub > span { background:var(--muted); }
   @keyframes barSlide { 0% { margin-left:-30%; } 100% { margin-left:100%; } }
   .meta { color:var(--muted); font-size:11px; margin-top:5px; display:flex; gap:9px; flex-wrap:wrap; align-items:center; }
   .meta .time-ago { margin-left:auto; white-space:nowrap; }
@@ -165,6 +166,38 @@
   .drow .t { flex:1; height:16px; background:var(--line2); border-radius:4px; overflow:hidden; }
   .drow .t > span { display:block; height:100%; border-radius:4px; }
   .drow .v { width:34px; text-align:right; font-variant-numeric:tabular-nums; font-size:12px; }
+
+  .dirchart { display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+  .dirchart-img { width:180px; height:180px; flex:none; }
+  /* The dashboard's rootfs-composition chart is the one PNG with in-wedge/
+     leader-line text baked in (ifda/report/piechart.py's annotate=True) --
+     shown much bigger than the plain (unannotated) charts above, which
+     have no text of their own to stay legible at, so 180px is plenty. */
+  .dirchart-img-lg { width:380px; height:380px; }
+  .dirchart-legend { flex:1; min-width:220px; }
+  .archPanel { display:flex; flex-direction:column; align-items:center; gap:6px; flex:none; }
+  .archVis { width:140px; height:140px; }
+  .archPanelLabel { font-size:11px; color:var(--muted); text-align:center; max-width:140px; }
+  /* Same DOM circle per arch (Alpine :key) gets its dasharray/dashoffset
+     patched in place on every progress tick, so this transition is what
+     makes the wedges visibly grow/shrink instead of snapping. */
+  .archSeg { transition:stroke-dasharray .6s ease, stroke-dashoffset .6s ease; }
+
+  /* Decorative "scanning" illustration on the running-job view: a
+     magnifying glass sweeping across a wafer / memory chip / hard drive.
+     Purely visual (aria-hidden) -- the real progress data is the bars and
+     the arch chart above/below it, this just gives the eye something alive
+     to look at during a scan. */
+  .scanIllustration { display:block; width:100%; max-width:565px; height:90px; margin:14px auto 4px; color:var(--muted); }
+  .hw-icon { color:var(--muted); }
+  .scanLens { transform:translate(30px,45px); animation:lensSweep 4.5s ease-in-out infinite alternate; }
+  @keyframes lensSweep {
+    0%   { transform:translate(30px,45px); }
+    100% { transform:translate(535px,45px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scanLens { animation:none; }
+  }
 
   .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;
              background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
@@ -616,6 +649,7 @@
         <div class="jobctl" x-show="['completed','failed','cancelled'].includes(j.status)" @click.stop>
           <button class="ghost sm" @click="deleteJob(j.id)" x-text="t('btn_delete')"></button>
           <button class="ghost sm" x-show="j.status==='completed'" @click="openAIAnalysisForJob(j.id)" x-text="t('tab_ai')"></button>
+          <button class="ghost sm" @click="rescan(j)" :title="t('btn_rescan_hint')" x-text="t('btn_rescan')"></button>
         </div>
       </div>
     </template>
@@ -860,6 +894,41 @@
             </div>
             <p class="meta" x-text="t('compare_unchanged')+': '+compareResult.fileDiff.unchangedCount"></p>
 
+            <h3 style="margin-top:18px" x-text="t('compare_functions_h')"></h3>
+            <p class="meta" x-text="t('compare_functions_hint')"></p>
+            <template x-if="compareResult.functionDiff.rows.length">
+              <div>
+                <div class="cards">
+                  <div class="card"><div class="n sev-crit" x-text="compareResult.functionDiff.counts.added"></div><div class="l" x-text="t('fn_added')"></div></div>
+                  <div class="card"><div class="n sev-high" x-text="compareResult.functionDiff.counts.removed"></div><div class="l" x-text="t('fn_removed')"></div></div>
+                  <div class="card"><div class="n sev-med" x-text="compareResult.functionDiff.counts.modified"></div><div class="l" x-text="t('fn_modified')"></div></div>
+                  <div class="card"><div class="n" x-text="compareResult.functionDiff.counts.unchanged"></div><div class="l" x-text="t('fn_unchanged')"></div></div>
+                </div>
+                <div class="dirchart" x-show="functionDiffChartUrl">
+                  <img class="dirchart-img" :src="functionDiffChartUrl" alt="">
+                </div>
+                <div class="table-wrap">
+                  <table class="bins">
+                    <thead><tr><th x-text="t('th_path')"></th><th x-text="t('th_function')"></th><th x-text="t('compare_status')"></th><th x-text="t('th_size')"></th><th x-text="t('th_calls')"></th></tr></thead>
+                    <tbody>
+                      <template x-for="(x,i) in compareResult.functionDiff.rows" :key="i">
+                        <tr>
+                          <td class="path" :title="x.path" x-text="shortPath(x.path)"></td>
+                          <td class="path" x-text="x.name"></td>
+                          <td><span class="chip" :class="{added:'ok', removed:'bad', modified:'warn'}[x.status]" x-text="t('fn_'+x.status)"></span></td>
+                          <td x-text="(x.sizeA??'—')+' → '+(x.sizeB??'—')"></td>
+                          <td x-text="(x.callsA??'—')+' → '+(x.callsB??'—')"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </template>
+            <template x-if="!compareResult.functionDiff.rows.length">
+              <div class="empty" x-text="t('compare_none')"></div>
+            </template>
+
             <h3 style="margin-top:18px" x-text="t('compare_strings')"></h3>
             <p class="meta" x-text="t('compare_status_added')+': '+compareResult.stringsAddedTotal+'  ·  '+t('compare_status_removed')+': '+compareResult.stringsRemovedTotal"></p>
             <pre class="code" style="max-height:30vh" x-show="compareResult.stringsAdded.length" x-text="compareResult.stringsAdded.map(s=>'+ '+s).join('\n')"></pre>
@@ -889,12 +958,164 @@
           <span x-show="['queued','running'].includes(selJob.status) && !selJob.stage" class="spinner sm"></span>
           <span x-text="(selJob.stage||(selJob.status==='queued'?t('waiting_to_start'):''))+' — '+(selJob.detail||'')+' ('+selJob.progress+'%)'"></span>
         </p>
+        <template x-if="curStageProgress">
+          <div style="max-width:420px;margin-top:4px">
+            <div class="bar sub"><span :style="`width:${curStageProgress.pct}%`"></span></div>
+            <p class="meta" style="margin:2px 0 0"
+               x-text="t('stage_'+curStageProgress.stage)+': '+curStageProgress.done+'/'+curStageProgress.total"></p>
+          </div>
+        </template>
+        <svg class="scanIllustration" viewBox="0 0 565 90" aria-hidden="true">
+          <defs>
+            <radialGradient id="waferGrad" cx="35%" cy="28%" r="80%">
+              <stop offset="0%" stop-color="#e4eefc"/>
+              <stop offset="42%" stop-color="#a9c8ea"/>
+              <stop offset="75%" stop-color="#6d93bd"/>
+              <stop offset="100%" stop-color="#3f5c7a"/>
+            </radialGradient>
+            <linearGradient id="chipGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#454b58"/>
+              <stop offset="55%" stop-color="#1f222a"/>
+              <stop offset="100%" stop-color="#0a0c10"/>
+            </linearGradient>
+            <linearGradient id="pinGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#f0f3f7"/>
+              <stop offset="100%" stop-color="#9aa4b2"/>
+            </linearGradient>
+            <linearGradient id="hddGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#d3dbe3"/>
+              <stop offset="50%" stop-color="#98a2ae"/>
+              <stop offset="100%" stop-color="#606a76"/>
+            </linearGradient>
+            <radialGradient id="platterGrad" cx="45%" cy="35%" r="75%">
+              <stop offset="0%" stop-color="#eef1f4"/>
+              <stop offset="55%" stop-color="#b7c0c9"/>
+              <stop offset="100%" stop-color="#79828e"/>
+            </radialGradient>
+            <linearGradient id="robotGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#f2f4f7"/>
+              <stop offset="55%" stop-color="#ced4dc"/>
+              <stop offset="100%" stop-color="#9aa2ac"/>
+            </linearGradient>
+          </defs>
+
+          <!-- silicon wafer: glossy disc, die grid, flat-edge notch, shine arc -->
+          <g class="hw-icon">
+            <circle cx="45" cy="45" r="30" fill="url(#waferGrad)" stroke="#2c435c" stroke-width="1.5"/>
+            <path d="M32 73.4 A30 30 0 0 0 58 73.4 L54.5 68.8 A24 24 0 0 1 35.5 68.8 Z" fill="#1c2c3d"/>
+            <path d="M27 27 H63 M27 36 H63 M27 45 H63 M27 54 H63 M27 63 H63
+                     M27 27 V63 M36 27 V63 M45 27 V63 M54 27 V63 M63 27 V63"
+                  stroke="#1c2c3d" stroke-width=".6" opacity=".5"/>
+            <path d="M22 20 A29 29 0 0 1 45 16" fill="none" stroke="#ffffff" stroke-width="2.5"
+                  stroke-linecap="round" opacity=".55"/>
+          </g>
+
+          <!-- IC package: gradient body, pin-1 marker, pins on all four sides -->
+          <g class="hw-icon" transform="translate(135,15)">
+            <rect x="0" y="0" width="60" height="60" rx="5" fill="url(#chipGrad)" stroke="#000" stroke-width="1"/>
+            <rect x="6" y="6" width="48" height="48" rx="2" fill="none" stroke="#4a5164" stroke-width=".75" opacity=".7"/>
+            <path d="M14,-8 V0 M24,-8 V0 M36,-8 V0 M46,-8 V0
+                     M14,60 V68 M24,60 V68 M36,60 V68 M46,60 V68
+                     M-8,14 H0 M-8,24 H0 M-8,36 H0 M-8,46 H0
+                     M60,14 H68 M60,24 H68 M60,36 H68 M60,46 H68"
+                  stroke="url(#pinGrad)" stroke-width="2.4" stroke-linecap="round"/>
+            <circle cx="12" cy="12" r="2.5" fill="#c7cedb"/>
+            <path d="M14 44 H46 M14 50 H38" stroke="#565d6e" stroke-width="1.6" stroke-linecap="round"/>
+          </g>
+
+          <!-- hard drive: brushed-metal case, platter with tracks, actuator arm+head, screws -->
+          <g class="hw-icon" transform="translate(250,15)">
+            <rect x="0" y="0" width="70" height="60" rx="5" fill="url(#hddGrad)" stroke="#454e58" stroke-width="1"/>
+            <circle cx="35" cy="30" r="21" fill="url(#platterGrad)" stroke="#5b636e" stroke-width="1"/>
+            <circle cx="35" cy="30" r="15" fill="none" stroke="#8f97a1" stroke-width=".6" opacity=".7"/>
+            <circle cx="35" cy="30" r="9" fill="none" stroke="#8f97a1" stroke-width=".6" opacity=".7"/>
+            <circle cx="35" cy="30" r="3.5" fill="#4c5560"/>
+            <path d="M35 30 L58 12 L61 15 L40 31 Z" fill="#333a44"/>
+            <circle cx="58" cy="12" r="2.2" fill="#20242b"/>
+            <circle cx="7" cy="7" r="2" fill="#555e69"/><circle cx="63" cy="7" r="2" fill="#555e69"/>
+            <circle cx="7" cy="53" r="2" fill="#555e69"/><circle cx="63" cy="53" r="2" fill="#555e69"/>
+            <rect x="4" y="46" width="26" height="9" rx="1.5" fill="#e7ebef" opacity=".85"/>
+          </g>
+
+          <!-- humanoid robot: generic sleek biped silhouette (visor head,
+               articulated shoulder/hip joints, chest indicator light),
+               not a depiction of any specific vendor's product. -->
+          <g class="hw-icon" transform="translate(365,8)">
+            <path d="M21,53 L18,67 L16,78" fill="none" stroke="#aab2bd" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M39,53 L42,67 L44,78" fill="none" stroke="#aab2bd" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="10" y="76" width="10" height="4" rx="2" fill="#5b6470"/>
+            <rect x="40" y="76" width="10" height="4" rx="2" fill="#5b6470"/>
+            <path d="M13,27 L5,42 L8,58" fill="none" stroke="#b7bfc9" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M47,27 L55,42 L52,58" fill="none" stroke="#b7bfc9" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="13" y="23" width="34" height="30" rx="8" fill="url(#robotGrad)" stroke="#5b6470" stroke-width="1.2"/>
+            <circle cx="30" cy="38" r="3" fill="#4fd1ff"/>
+            <circle cx="13" cy="27" r="4" fill="#7d8794"/><circle cx="47" cy="27" r="4" fill="#7d8794"/>
+            <circle cx="21" cy="53" r="4" fill="#7d8794"/><circle cx="39" cy="53" r="4" fill="#7d8794"/>
+            <rect x="26" y="18" width="8" height="6" fill="#9aa2ac"/>
+            <rect x="19" y="0" width="22" height="19" rx="7" fill="url(#robotGrad)" stroke="#5b6470" stroke-width="1.2"/>
+            <rect x="22" y="7" width="16" height="5" rx="2.5" fill="#141822"/>
+            <circle cx="30" cy="-3" r="1.8" fill="#4fd1ff"/>
+          </g>
+
+          <!-- quadruped robot dog: generic sleek four-legged robot
+               silhouette (raised sensor head, low articulated body), same
+               non-branded intent as the humanoid above. -->
+          <g class="hw-icon" transform="translate(440,20)">
+            <path d="M72,34 L68,48 L64,58" fill="none" stroke="#aab2bd" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M78,34 L82,46 L86,56" fill="none" stroke="#aab2bd" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M30,34 L26,48 L22,58" fill="none" stroke="#aab2bd" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M38,34 L42,46 L46,56" fill="none" stroke="#aab2bd" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M20,18 L9,11" fill="none" stroke="#7d8794" stroke-width="3" stroke-linecap="round"/>
+            <rect x="20" y="10" width="65" height="24" rx="12" fill="url(#robotGrad)" stroke="#5b6470" stroke-width="1.2"/>
+            <circle cx="35" cy="22" r="2.5" fill="#4fd1ff"/>
+            <rect x="82" y="2" width="22" height="18" rx="7" fill="url(#robotGrad)" stroke="#5b6470" stroke-width="1.2"/>
+            <circle cx="100" cy="11" r="2.2" fill="#141822"/>
+          </g>
+
+          <g class="scanLens">
+            <circle cx="0" cy="0" r="16" fill="none" stroke="var(--accent)" stroke-width="3"/>
+            <circle cx="0" cy="0" r="16" fill="var(--accent)" opacity=".08"/>
+            <line x1="11" y1="11" x2="26" y2="26" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </svg>
         <p x-show="selJob.status==='failed'" class="sev-crit" x-text="selJob.error"></p>
         <div class="jobctl" x-show="['queued','running','paused'].includes(selJob.status)">
           <button x-show="selJob.status==='running'" @click="pauseJob(selJob.id)" x-text="t('btn_pause')"></button>
           <button x-show="selJob.status==='paused'" @click="resumeJob(selJob.id)" x-text="t('btn_resume')"></button>
           <button class="ghost" @click="stopJob(selJob.id)" x-text="t('btn_stop')"></button>
         </div>
+        <template x-if="Object.keys(archChartCounts).length">
+          <div class="distro" style="margin-top:18px">
+            <h3 x-text="t('live_arch_h')"></h3>
+            <div class="dirchart">
+              <div class="archPanel">
+                <svg class="archVis" viewBox="0 0 100 100" aria-hidden="true">
+                  <g transform="rotate(-90 50 50)">
+                    <template x-for="seg in archChartSegments" :key="seg.arch">
+                      <circle cx="50" cy="50" r="42" fill="none" stroke-width="16"
+                              :stroke="seg.color" :stroke-dasharray="seg.dasharray"
+                              :stroke-dashoffset="seg.dashoffset" class="archSeg"></circle>
+                    </template>
+                  </g>
+                </svg>
+                <div class="archPanelLabel" x-text="t('arch_svg_label')"></div>
+              </div>
+              <div class="archPanel" x-show="archChartUrl">
+                <img class="dirchart-img archVis" :src="archChartUrl" alt="">
+                <div class="archPanelLabel" x-text="t('arch_png_label')"></div>
+              </div>
+              <div class="dirchart-legend">
+                <template x-for="row in archChartRows" :key="row.arch">
+                  <div class="drow">
+                    <div class="k" style="width:90px" x-text="row.arch"></div>
+                    <div class="t"><span class="bg-info" :style="`width:${row.pct}%`"></span></div>
+                    <div class="v" style="width:auto" x-text="row.n"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
         <h3 style="margin-top:22px" x-text="t('process_log')"></h3>
         <template x-if="!(selJob.log&&selJob.log.length)"><div class="empty" style="margin-top:12px" x-text="t('no_log_yet')"></div></template>
         <div class="proclog" x-show="selJob.log&&selJob.log.length" x-ref="proclog"
@@ -1036,6 +1257,25 @@
                 <span class="chip neutral" x-text="p"></span>
               </template>
             </div>
+          </div>
+
+          <div class="distro" x-show="dirBreakdown.length">
+            <h3 x-text="t('dash_dirchart_h')"></h3>
+            <div class="dirchart">
+              <img class="dirchart-img dirchart-img-lg" :src="dirChartURL()" alt="" loading="lazy">
+              <div class="dirchart-legend">
+                <template x-for="d in dirBreakdown" :key="d.name">
+                  <div class="drow">
+                    <div class="k" style="width:90px" x-text="d.name"></div>
+                    <div class="t"><span class="bg-info" :style="`width:${d.pct}%`"></span></div>
+                    <div class="v" style="width:auto;white-space:nowrap" x-text="d.pct.toFixed(1)+'% · '+formatSize(d.bytes)"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div class="l" style="color:var(--muted);font-size:11px;margin-top:6px"
+                 x-show="summary.dir_chart_renderer"
+                 x-text="t('dash_dirchart_renderer')+': '+(summary.dir_chart_renderer==='cuda'?t('dash_dirchart_cuda'):t('dash_dirchart_cpu'))"></div>
           </div>
 
           <div class="distro">
@@ -1663,6 +1903,18 @@ const I18N = {
   fw_config_files:      { en: "Config files",                          zh: "配置文件数" },
   fw_certs:             { en: "Certificates",                          zh: "证书数" },
   fw_component_names_show: { en: "Show component names",               zh: "展开查看组件名称" },
+  live_arch_h:          { en: "Binaries processed so far, by architecture", zh: "已处理二进制按架构分布" },
+  arch_svg_label:       { en: "Live preview (animates as the scan progresses)", zh: "实时预览(随扫描平滑生长)" },
+  arch_png_label:       { en: "Server-rendered snapshot (CUDA/CPU)",        zh: "服务端渲染结果(CUDA/CPU)" },
+  btn_rescan:           { en: "Re-scan",                               zh: "重新扫描" },
+  btn_rescan_hint:      { en: "Re-analyze this target from scratch (bypasses the cache, unlike resubmitting the same path)",
+                           zh: "重新完整分析这个目标(跳过缓存,和直接重新提交同一路径不同)" },
+  stage_disassemble:    { en: "Disassembling",                        zh: "反汇编中" },
+  stage_decompile:      { en: "Decompiling (Ghidra)",                 zh: "反编译中(Ghidra)" },
+  dash_dirchart_h:      { en: "Rootfs composition",                    zh: "根文件系统占用分布" },
+  dash_dirchart_renderer: { en: "Chart rendered via",                  zh: "图表渲染方式" },
+  dash_dirchart_cuda:   { en: "GPU (CUDA)",                             zh: "GPU(CUDA)" },
+  dash_dirchart_cpu:    { en: "CPU",                                    zh: "CPU" },
   dash_busybox_h:       { en: "BusyBox overview",                      zh: "BusyBox 情况" },
   dash_busybox_compiled:{ en: "Applets compiled in",                   zh: "已有指令数" },
   dash_busybox_missing: { en: "Missing (crippled)",                    zh: "被移除指令数" },
@@ -1932,6 +2184,17 @@ const I18N = {
   compare_unchanged:    { en: "Unchanged files",                     zh: "未变化文件数" },
   compare_strings:      { en: "String changes",                     zh: "字符串变化" },
   compare_sensitive:    { en: "Sensitive string changes",            zh: "敏感字符串变化" },
+  compare_functions_h:  { en: "Function changes (same-path binaries, matched by name)",
+                           zh: "函数变化(同路径二进制,按函数名匹配)" },
+  compare_functions_hint: { en: "Renamed/stripped functions show as one removed + one added, not modified — this matches by name, not BinDiff-style structural matching.",
+                             zh: "被改名/重新去符号的函数会显示为一增一减,而不是“已修改”——这里按函数名匹配,不是 BinDiff 那种结构匹配。" },
+  fn_added:             { en: "Added",                               zh: "新增" },
+  fn_removed:           { en: "Removed",                              zh: "移除" },
+  fn_modified:          { en: "Modified",                             zh: "已修改" },
+  fn_unchanged:         { en: "Unchanged",                            zh: "未变化" },
+  th_function:          { en: "Function",                             zh: "函数" },
+  th_size:              { en: "Size",                                 zh: "大小" },
+  th_calls:             { en: "Calls",                                zh: "调用数" },
   th_path:              { en: "Path",                                zh: "路径" },
   export_filtered_csv:  { en: "Export filtered (CSV)",                zh: "导出筛选结果(CSV)" },
   export_filtered_json: { en: "Export filtered (JSON)",               zh: "导出筛选结果(JSON)" },
@@ -2022,6 +2285,13 @@ function app() {
     showChangePassword: false, oldPassword: "", newPassword: "", newPassword2: "", changePasswordError: "", changePasswordOk: false,
     actor: localStorage.getItem("ifda-actor") || "",
     compareMode: false, compareA: "", compareB: "", compareResult: null, comparing: false, compareProgress: 0,
+    functionDiffChartUrl: null,
+    archChartUrl: null, archChartCounts: {}, archChartFetching: false, archChartLastFetch: 0,
+    // Same 12-color set as ifda/report/piechart.py's _PALETTE, so the live
+    // client-side SVG animation and the CUDA/CPU-rendered PNG next to it
+    // are recognizably the same chart, not two unrelated visualizations.
+    ARCH_PALETTE: ["#4285F4","#DB4437","#F4A000","#0F9D58","#AB47BC","#00ACC1",
+                   "#FF7043","#9E9D24","#5C6BC0","#00796B","#C2185B","#795548"],
     showVulnDB: true, vulnDB: null, vulnDBLoading: false, vulnDBCheckerFilter: "",
     showSensitiveDict: false,
     showAISettings: false,
@@ -2178,6 +2448,20 @@ function app() {
       if (!r.ok) { alert(j.error||"submit failed"); return; }
       await this.refreshJobs(); this.select(j.id);
     },
+    // Re-runs analysis on an already-scanned target from its job row --
+    // `force:true` so the dedup cache (Store.cacheLookup, keyed on target
+    // path+size+mtime) doesn't just CopyJob the old report verbatim, which
+    // would silently reproduce whatever the previous scan was missing (a
+    // report field added since, a fixed detector, ...) instead of actually
+    // re-analyzing.
+    async rescan(job) {
+      const r = await this.apiFetch("/api/jobs", {method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({target:job.target, decompile:job.decompile, force:true})});
+      const j = await r.json();
+      if (!r.ok) { alert(j.error||"rescan failed"); return; }
+      await this.refreshJobs(); this.select(j.id);
+    },
     async upload(ev) {
       const file = ev.target.files[0]; if (!file) return;
       this.uploading = true;
@@ -2203,17 +2487,55 @@ function app() {
       const job = this.jobs.find(x => x.id === id);
       if (job && job.status === "completed") { this.loadReport(id); return; }
       if (job && job.status === "failed") return;
+      if (this.archChartUrl) { URL.revokeObjectURL(this.archChartUrl); this.archChartUrl = null; }
+      this.archChartCounts = {};
       this.sse = new EventSource(`/api/jobs/${id}/events${this.tokenParam("?")}`);
       this.sse.onmessage = (e) => {
         const j = JSON.parse(e.data);
         const idx = this.jobs.findIndex(x => x.id === j.id);
         if (idx >= 0) this.jobs[idx] = j;
+        this.maybeUpdateArchChart(j);
         if (j.status === "completed") { this.closeSSE(); this.loadReport(id); }
         if (j.status === "failed") this.closeSSE();
       };
       this.sse.onerror = () => this.closeSSE();
     },
     closeSSE() { if (this.sse) { this.sse.close(); this.sse = null; } },
+    // Live "binaries processed so far, by architecture" chart during an
+    // active scan (CUDA/CPU-rendered via /api/chart/pie, same renderer as
+    // the dashboard/compare-scan charts). The disassemble stage covers most
+    // of a scan's wall time and reports each binary's resolved arch as it's
+    // processed (ifda/pipeline.py's emit(..., arch=info.arch)), so this
+    // genuinely fills in progressively -- unlike a file-kind breakdown,
+    // which is only known in the very last stage. Throttled: a chart render
+    // is a real subprocess spawn, not free, and SSE can push updates as
+    // often as every ~400ms.
+    async maybeUpdateArchChart(job) {
+      if (job.status !== "running" && job.status !== "paused") return;
+      const counts = {};
+      for (const e of (job.log || [])) {
+        if (e.stage === "disassemble" && e.arch) counts[e.arch] = (counts[e.arch] || 0) + 1;
+      }
+      if (!Object.keys(counts).length) return;
+      const now = Date.now();
+      if (this.archChartFetching || now - this.archChartLastFetch < 1500) return;
+      this.archChartFetching = true;
+      this.archChartLastFetch = now;
+      try {
+        const slices = Object.entries(counts).map(([name, value]) => ({name, value}));
+        const r = await this.apiFetch("/api/chart/pie", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({slices}),
+        });
+        if (r.ok) {
+          const blob = await r.blob();
+          if (this.archChartUrl) URL.revokeObjectURL(this.archChartUrl);
+          this.archChartUrl = URL.createObjectURL(blob);
+          this.archChartCounts = counts;
+        }
+      } catch (e) { /* best-effort; the text progress log still shows what's happening */ }
+      finally { this.archChartFetching = false; }
+    },
     // Loads the lightweight summary plus one page each of findings/binaries/
     // scripts/components — never the whole report in one response the way
     // this used to work (that's what let a large scan crash the tab).
@@ -2595,6 +2917,57 @@ function app() {
       const m = (this.summary && this.summary.by_vuln_class) || {};
       return Object.entries(m).map(([k,n])=>({k,n})).sort((a,b)=>b.n-a.n);
     },
+    get dirBreakdown() { return (this.summary && this.summary.dir_breakdown) || []; },
+    // Current-stage sub-progress (distinct from selJob.progress, the overall
+    // 0-100% bar): only "disassemble"/"decompile" carry a done/total pair
+    // (see ifda/pipeline.py's emit(..., done=, total=)) -- every other stage
+    // is a single atomic call with no meaningful sub-count, so this is null
+    // for those and the extra bar simply doesn't render.
+    get curStageProgress() {
+      const j = this.selJob;
+      if (!j || !["disassemble", "decompile"].includes(j.stage)) return null;
+      const log = j.log || [];
+      for (let i = log.length - 1; i >= 0; i--) {
+        const e = log[i];
+        if (e.stage === j.stage && e.total > 0) {
+          return {stage: e.stage, done: e.done, total: e.total, pct: Math.round(100 * e.done / e.total)};
+        }
+      }
+      return null;
+    },
+    get archChartRows() {
+      const total = Object.values(this.archChartCounts).reduce((a, b) => a + b, 0) || 1;
+      return Object.entries(this.archChartCounts)
+        .map(([arch, n]) => ({arch, n, pct: Math.round(100 * n / total)}))
+        .sort((a, b) => b.n - a.n);
+    },
+    // Color per arch is assigned by first-seen order (Object.keys on a
+    // plain object preserves insertion order for string keys), NOT by
+    // current rank in archChartRows -- archChartRows re-sorts by count on
+    // every tick, and if color followed that sort order a slice could
+    // change color mid-scan whenever two archs swapped rank, which would
+    // read as a different slice appearing rather than the same one growing.
+    archColorFor(arch) {
+      const idx = Object.keys(this.archChartCounts).indexOf(arch);
+      return this.ARCH_PALETTE[(idx < 0 ? 0 : idx) % this.ARCH_PALETTE.length];
+    },
+    // SVG donut segments for the live client-side animation (see .archSeg's
+    // CSS transition): stroke-dasharray/-dashoffset on a set of concentric
+    // circles, one per arch, in a group rotated -90deg so the first segment
+    // starts at 12 o'clock -- same convention as the CUDA/CPU renderer's
+    // angle math (ifda/report/piechart.py), so the two visually agree.
+    get archChartSegments() {
+      const total = Object.values(this.archChartCounts).reduce((a, b) => a + b, 0) || 1;
+      const C = 2 * Math.PI * 42; // circumference at r=42 (see the <circle> markup)
+      let cumulative = 0;
+      return Object.entries(this.archChartCounts).map(([arch, n]) => {
+        const len = (n / total) * C;
+        const seg = {arch, color: this.archColorFor(arch),
+                     dasharray: `${len} ${C - len}`, dashoffset: -cumulative};
+        cumulative += len;
+        return seg;
+      });
+    },
     sevCount(s) { return (this.summary && this.summary.by_severity[s]) || 0; },
     pct(n) { const max = Math.max(1, ...SEVS.map(s=>this.sevCount(s)), ...this.classCounts.map(c=>c.n)); return Math.round(100*n/max); },
     formatSize(bytes) {
@@ -2620,6 +2993,7 @@ function app() {
       else { const j = await r.json(); alert(j.error||"triage failed"); }
     },
     exportURL(fmt) { return `/api/jobs/${this.selectedId}/report?format=${fmt}&download=1${this.tokenParam("&")}`; },
+    dirChartURL() { return `/api/jobs/${this.selectedId}/dir-chart${this.tokenParam("?")}`; },
     downloadBlob(content, mime, filename) {
       const blob = new Blob([content], {type: mime});
       const url = URL.createObjectURL(blob);
@@ -2697,7 +3071,10 @@ function app() {
     get completedJobs() { return this.jobs.filter(j => j.status === "completed"); },
     toggleCompare() {
       this.compareMode = !this.compareMode;
-      if (this.compareMode) { this.closeSSE(); this.compareResult = null; this.showVulnDB = false; this.showSensitiveDict = false; }
+      if (this.compareMode) {
+        this.closeSSE(); this.compareResult = null; this.showVulnDB = false; this.showSensitiveDict = false;
+        if (this.functionDiffChartUrl) { URL.revokeObjectURL(this.functionDiffChartUrl); this.functionDiffChartUrl = null; }
+      }
     },
     async loadVulnDB() {
       if (this.vulnDB) return; // cached — it's static reference data, not per-scan
@@ -3125,6 +3502,48 @@ function app() {
         const sensA = matchSensitive(stringsA);
         const sensB = matchSensitive(stringsB);
 
+        // Function-level diff (FR-INV): same-path binaries only, matched by
+        // function name -- see ifda/re/disasm.py's per-function mnemonic-
+        // histogram fingerprint (Function.fingerprint) for what "modified"
+        // means here. This is NOT full BinDiff-style renamed-function
+        // matching: a function that only changed name (re-stripped/re-
+        // symbolized) between scans shows as one removed + one added, not
+        // one modified. A binary present on only one side is skipped here
+        // (already covered by fileDiff above) -- every function in it would
+        // trivially be "all added" or "all removed", which adds noise
+        // without new information.
+        const binariesByPathA = new Map((ra.binaries||[]).map(b => [relPath(b.path, ra.target), b]));
+        const binariesByPathB = new Map((rb.binaries||[]).map(b => [relPath(b.path, rb.target), b]));
+        const functionDiff = { counts: {added:0, removed:0, modified:0, unchanged:0}, rows: [] };
+        for (const [path, binA] of binariesByPathA) {
+          const binB = binariesByPathB.get(path);
+          if (!binB) continue;
+          const fnA = new Map((binA.functions||[]).map(f => [f.name, f]));
+          const fnB = new Map((binB.functions||[]).map(f => [f.name, f]));
+          for (const [name, a] of fnA) {
+            const b = fnB.get(name);
+            if (!b) {
+              functionDiff.counts.removed++;
+              functionDiff.rows.push({path, name, status:'removed', sizeA:a.size, sizeB:null, callsA:(a.calls||[]).length, callsB:null});
+            } else if (!a.fingerprint || !b.fingerprint || a.fingerprint !== b.fingerprint) {
+              // No fingerprint on either side (unsupported arch, or a
+              // fallback pseudo-function with nothing decoded) can't be
+              // confirmed equal -- treat as modified rather than risk a
+              // false "unchanged".
+              functionDiff.counts.modified++;
+              functionDiff.rows.push({path, name, status:'modified', sizeA:a.size, sizeB:b.size, callsA:(a.calls||[]).length, callsB:(b.calls||[]).length});
+            } else {
+              functionDiff.counts.unchanged++;
+            }
+          }
+          for (const [name, b] of fnB) {
+            if (!fnA.has(name)) {
+              functionDiff.counts.added++;
+              functionDiff.rows.push({path, name, status:'added', sizeA:null, sizeB:b.size, callsA:null, callsB:(b.calls||[]).length});
+            }
+          }
+        }
+
         this.compareResult = {
           added: [...bByKey.entries()].filter(([k]) => !aByKey.has(k)).map(([,f]) => f),
           removed: [...aByKey.entries()].filter(([k]) => !bByKey.has(k)).map(([,f]) => f),
@@ -3133,16 +3552,39 @@ function app() {
           scriptsA: (ra.scripts||[]).length, scriptsB: (rb.scripts||[]).length,
           filesA: filesA.length, filesB: filesB.length,
           fileDiff,
+          functionDiff,
           stringsAdded: addedStrings.slice(0, STR_CAP), stringsAddedTotal: addedStrings.length,
           stringsRemoved: removedStrings.slice(0, STR_CAP), stringsRemovedTotal: removedStrings.length,
           sensitiveAdded: [...sensB].filter(s => !sensA.has(s)),
           sensitiveRemoved: [...sensA].filter(s => !sensB.has(s)),
         };
+        this.fetchFunctionDiffChart(functionDiff.counts);
       } catch (e) {
         alert("compare failed: " + e);
       } finally {
         this.comparing = false;
       }
+    },
+    // Renders the added/removed/modified/unchanged function counts as a
+    // CUDA/CPU-rendered pie chart (POST /api/chart/pie -> ifda/report/
+    // piechart.py, same renderer as the dashboard's rootfs-composition
+    // chart) -- best-effort: the counts themselves (already in
+    // compareResult.functionDiff.counts) are the source of truth, this is
+    // just a visualization on top, so a failure here is silently ignored
+    // rather than surfaced as a compare-scan error.
+    async fetchFunctionDiffChart(counts) {
+      if (this.functionDiffChartUrl) { URL.revokeObjectURL(this.functionDiffChartUrl); this.functionDiffChartUrl = null; }
+      const slices = Object.entries(counts).filter(([,v]) => v > 0).map(([k,v]) => ({name: this.t('fn_'+k), value: v}));
+      if (!slices.length) return;
+      try {
+        const r = await this.apiFetch('/api/chart/pie', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({slices}),
+        });
+        if (!r.ok) return;
+        const blob = await r.blob();
+        this.functionDiffChartUrl = URL.createObjectURL(blob);
+      } catch (e) { /* best-effort visualization; counts/table still render without it */ }
     },
     toggleDeleteSelect(id) {
       const i = this.deleteSelected.indexOf(id);

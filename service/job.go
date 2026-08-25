@@ -74,6 +74,7 @@ type Job struct {
 	reportPath string // temp file holding the full JSON report
 	mdPath     string // Markdown report
 	sbomPath   string // CycloneDX SBOM
+	chartPath  string // rootfs directory-composition pie chart PNG
 
 	// Control handles for pause/resume/stop. Set once the analysis subprocess
 	// exists; cancelFn is registered *before* the process is spawned so a Stop
@@ -89,6 +90,19 @@ type LogEntry struct {
 	Stage  string    `json:"stage"`
 	Detail string    `json:"detail"`
 	Pct    int       `json:"pct"`
+	// Arch is set only on "disassemble" stage events (ifda/pipeline.py's
+	// emit(..., arch=info.arch)) -- the web UI's live progress chart tallies
+	// these to show "binaries processed so far, by architecture" while a
+	// scan is still running.
+	Arch string `json:"arch,omitempty"`
+	// Done/Total are set only on stages with a natural per-item sub-count
+	// (currently "disassemble" and "decompile" -- the two stages whose own
+	// item count can dominate a scan's wall time), for a dedicated
+	// current-stage progress bar distinct from the overall Pct. Omitted
+	// (both zero) on every other stage, which are single atomic calls with
+	// no meaningful sub-progress to show.
+	Done  int `json:"done,omitempty"`
+	Total int `json:"total,omitempty"`
 }
 
 // maxJobLog caps how many log entries a job keeps (oldest dropped first), a
@@ -100,6 +114,9 @@ type progressEvent struct {
 	Stage  string `json:"stage"`
 	Pct    int    `json:"pct"`
 	Detail string `json:"detail"`
+	Arch   string `json:"arch,omitempty"`
+	Done   int    `json:"done,omitempty"`
+	Total  int    `json:"total,omitempty"`
 }
 
 // Store is a job registry with a path-based dedup cache (NFR-PERF), backed by
@@ -147,6 +164,7 @@ type jobRecord struct {
 	ReportPath      string     `json:"report_path,omitempty"`
 	MDPath          string     `json:"md_path,omitempty"`
 	SBOMPath        string     `json:"sbom_path,omitempty"`
+	ChartPath       string     `json:"chart_path,omitempty"`
 	Log             []LogEntry `json:"log,omitempty"`
 }
 
@@ -157,7 +175,7 @@ func recordFromJob(j *Job) jobRecord {
 		HighCrit: j.HighCrit, Error: j.Error, CreatedAt: j.CreatedAt,
 		StartedAt: j.StartedAt, FinishedAt: j.FinishedAt, CacheHit: j.CacheHit,
 		AnalyzerVersion: j.AnalyzerVersion,
-		ReportPath:      j.reportPath, MDPath: j.mdPath, SBOMPath: j.sbomPath, Log: j.Log,
+		ReportPath:      j.reportPath, MDPath: j.mdPath, SBOMPath: j.sbomPath, ChartPath: j.chartPath, Log: j.Log,
 	}
 }
 
@@ -168,7 +186,7 @@ func (r jobRecord) toJob() *Job {
 		HighCrit: r.HighCrit, Error: r.Error, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, CacheHit: r.CacheHit,
 		AnalyzerVersion: r.AnalyzerVersion,
-		reportPath:      r.ReportPath, mdPath: r.MDPath, sbomPath: r.SBOMPath, Log: r.Log,
+		reportPath:      r.ReportPath, mdPath: r.MDPath, sbomPath: r.SBOMPath, chartPath: r.ChartPath, Log: r.Log,
 	}
 }
 
@@ -470,8 +488,16 @@ func NewWorker(store *Store, coreDir string, workers, qlen int, reportDB *Report
 	return w
 }
 
-// Submit enqueues a job, honoring the dedup cache.
-func (w *Worker) Submit(j *Job) {
+// Submit enqueues a job, honoring the dedup cache unless force is set (the
+// web UI's "re-scan" button -- a plain resubmit of a byte-identical target
+// would otherwise just CopyJob the previous cached report verbatim, which
+// defeats the point of asking for a fresh scan, e.g. to pick up analyzer
+// output fields a stale cached report predates).
+func (w *Worker) Submit(j *Job, force bool) {
+	if force {
+		w.queue <- j.ID
+		return
+	}
 	key := w.store.dedupKey(j.Target)
 	if prevID, ok := w.store.cacheLookup(key); ok {
 		if prev, ok := w.store.Get(prevID); ok && prev.Status == StatusCompleted {
@@ -492,6 +518,7 @@ func (w *Worker) Submit(j *Job) {
 				j.HighCrit = prev.HighCrit
 				j.mdPath = prev.mdPath
 				j.sbomPath = prev.sbomPath
+				j.chartPath = prev.chartPath
 				now := time.Now().UTC()
 				j.StartedAt, j.FinishedAt = &now, &now
 			})
@@ -533,6 +560,7 @@ func (w *Worker) run(id string) {
 	reportPath := filepath.Join(jobDir, "report.json")
 	mdPath := filepath.Join(jobDir, "report.md")
 	sbomPath := filepath.Join(jobDir, "report.sbom.json")
+	chartPath := filepath.Join(jobDir, "report.dirchart.png")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -544,7 +572,7 @@ func (w *Worker) run(id string) {
 	}
 
 	args := []string{"-m", "ifda.cli", "analyze",
-		job.Target, "--json", reportPath, "--md", mdPath, "--sbom", sbomPath,
+		job.Target, "--json", reportPath, "--md", mdPath, "--sbom", sbomPath, "--chart", chartPath,
 		"--progress"}
 	if job.Decompile {
 		// Opt-in (checked per job, not forced globally): Ghidra headless
@@ -588,7 +616,8 @@ func (w *Worker) run(id string) {
 						j.Progress, j.Stage, j.Detail = ev.Pct, ev.Stage, ev.Detail
 					}
 					j.Log = append(j.Log, LogEntry{
-						Time: time.Now().UTC(), Stage: ev.Stage, Detail: ev.Detail, Pct: ev.Pct,
+						Time: time.Now().UTC(), Stage: ev.Stage, Detail: ev.Detail, Pct: ev.Pct, Arch: ev.Arch,
+						Done: ev.Done, Total: ev.Total,
 					})
 					if len(j.Log) > maxJobLog {
 						j.Log = j.Log[len(j.Log)-maxJobLog:]
@@ -639,6 +668,7 @@ func (w *Worker) run(id string) {
 		j.reportPath = reportPath
 		j.mdPath = mdPath
 		j.sbomPath = sbomPath
+		j.chartPath = chartPath
 		j.FinishedAt = &fin
 		j.AnalyzerVersion = w.store.analyzerVersion
 	})

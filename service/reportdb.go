@@ -32,23 +32,25 @@ type ReportDB struct {
 // stored as JSON text columns rather than modeled further in Go, since the
 // API only ever needs to hand them back to the browser verbatim.
 type rawReport struct {
-	Target        string            `json:"target"`
-	ToolVersion   string            `json:"tool_version"`
-	GeneratedAt   string            `json:"generated_at"`
-	KernelVersion string            `json:"kernel_version"`
-	ArchSummary   string            `json:"arch_summary"`
-	EndianSummary string            `json:"endian_summary"`
-	FileCount     int               `json:"file_count"`
-	FirmwareSize  int64             `json:"firmware_size"`
-	CertCount     int               `json:"cert_count"`
-	RsaCertCount  int               `json:"rsa_cert_count"`
-	Binaries      []json.RawMessage `json:"binaries"`
-	Scripts       []json.RawMessage `json:"scripts"`
-	Components    []json.RawMessage `json:"components"`
-	Findings      []rawFinding      `json:"findings"`
-	Files         []json.RawMessage `json:"files"`
-	BusyboxAudit  json.RawMessage   `json:"busybox_audit"`
-	Services      json.RawMessage   `json:"services"`
+	Target           string            `json:"target"`
+	ToolVersion      string            `json:"tool_version"`
+	GeneratedAt      string            `json:"generated_at"`
+	KernelVersion    string            `json:"kernel_version"`
+	ArchSummary      string            `json:"arch_summary"`
+	EndianSummary    string            `json:"endian_summary"`
+	FileCount        int               `json:"file_count"`
+	FirmwareSize     int64             `json:"firmware_size"`
+	CertCount        int               `json:"cert_count"`
+	RsaCertCount     int               `json:"rsa_cert_count"`
+	DirBreakdown     json.RawMessage   `json:"dir_breakdown"`
+	DirChartRenderer string            `json:"dir_chart_renderer"`
+	Binaries         []json.RawMessage `json:"binaries"`
+	Scripts          []json.RawMessage `json:"scripts"`
+	Components       []json.RawMessage `json:"components"`
+	Findings         []rawFinding      `json:"findings"`
+	Files            []json.RawMessage `json:"files"`
+	BusyboxAudit     json.RawMessage   `json:"busybox_audit"`
+	Services         json.RawMessage   `json:"services"`
 }
 
 type rawFinding struct {
@@ -95,7 +97,8 @@ func (r *ReportDB) migrate() error {
 			file_count INTEGER, firmware_size INTEGER,
 			busybox_audit TEXT,
 			cert_count INTEGER, rsa_cert_count INTEGER,
-			services TEXT
+			services TEXT,
+			dir_breakdown TEXT, dir_chart_renderer TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS findings (
 			job_id TEXT, id TEXT, title TEXT, vuln_class TEXT, severity TEXT,
@@ -174,6 +177,11 @@ func (r *ReportDB) migrate() error {
 		`ALTER TABLE report_meta ADD COLUMN cert_count INTEGER`,
 		`ALTER TABLE report_meta ADD COLUMN rsa_cert_count INTEGER`,
 		`ALTER TABLE report_meta ADD COLUMN services TEXT`,
+		// Rootfs directory-composition pie chart (FR-INV dashboard visual):
+		// byte share per top-level directory, and which renderer ("cuda"/
+		// "cpu") actually produced the chart PNG -- see ifda/report/piechart.py.
+		`ALTER TABLE report_meta ADD COLUMN dir_breakdown TEXT`,
+		`ALTER TABLE report_meta ADD COLUMN dir_chart_renderer TEXT`,
 		// kind distinguishes the wire protocol to speak to a provider ("openai"
 		// -- Bearer auth, /chat/completions -- vs "anthropic" -- x-api-key
 		// auth, /messages, a separate top-level "system" field). Any row
@@ -255,12 +263,12 @@ func (r *ReportDB) Ingest(jobID string, reportJSON []byte, triageOverlay map[str
 	}
 
 	_, err = tx.Exec(`INSERT INTO report_meta
-		(job_id, target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(job_id, target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services, dir_breakdown, dir_chart_renderer)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, rep.Target, rep.ToolVersion, rep.GeneratedAt,
 		rep.KernelVersion, rep.ArchSummary, rep.EndianSummary, rep.FileCount, rep.FirmwareSize,
 		string(orEmptyObject(rep.BusyboxAudit)), rep.CertCount, rep.RsaCertCount,
-		string(orEmptyArray(rep.Services)))
+		string(orEmptyArray(rep.Services)), string(orEmptyArray(rep.DirBreakdown)), rep.DirChartRenderer)
 	if err != nil {
 		return
 	}
@@ -425,7 +433,7 @@ func (r *ReportDB) CopyJob(fromID, toID string) error {
 		return err
 	}
 	stmts := []struct{ table, cols string }{
-		{"report_meta", "target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services"},
+		{"report_meta", "target, tool_version, generated_at, kernel_version, arch_summary, endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services, dir_breakdown, dir_chart_renderer"},
 		{"findings", "id, title, vuln_class, severity, confidence, component, rule, description, remediation, cve_ids, evidence, triage, pseudocode"},
 		{"binaries", "path, data"},
 		{"scripts", "path, data"},
@@ -446,34 +454,37 @@ func (r *ReportDB) CopyJob(fromID, toID string) error {
 // renders from, replacing client-side `findings.length`/`.filter().length`
 // now that the full findings array isn't held in the browser anymore.
 type Summary struct {
-	Target        string         `json:"target"`
-	ToolVersion   string         `json:"tool_version"`
-	GeneratedAt   string         `json:"generated_at"`
-	KernelVersion string         `json:"kernel_version"`
-	ArchSummary   string         `json:"arch_summary"`
-	EndianSummary string         `json:"endian_summary"`
-	FileCount     int            `json:"file_count"`
-	FirmwareSize  int64          `json:"firmware_size"`
-	CertCount     int            `json:"cert_count"`
-	RsaCertCount  int            `json:"rsa_cert_count"`
-	Findings      int            `json:"findings"`
-	Binaries      int            `json:"binaries"`
-	Scripts       int            `json:"scripts"`
-	Components    int            `json:"components"`
-	BySeverity    map[string]int `json:"by_severity"`
-	ByVulnClass   map[string]int `json:"by_vuln_class"`
-	CVECount      int            `json:"cve_count"`
-	ServiceCount  int            `json:"service_count"`
-	OpenPortCount int            `json:"open_port_count"`
+	Target           string          `json:"target"`
+	ToolVersion      string          `json:"tool_version"`
+	GeneratedAt      string          `json:"generated_at"`
+	KernelVersion    string          `json:"kernel_version"`
+	ArchSummary      string          `json:"arch_summary"`
+	EndianSummary    string          `json:"endian_summary"`
+	FileCount        int             `json:"file_count"`
+	FirmwareSize     int64           `json:"firmware_size"`
+	CertCount        int             `json:"cert_count"`
+	RsaCertCount     int             `json:"rsa_cert_count"`
+	DirBreakdown     json.RawMessage `json:"dir_breakdown"`
+	DirChartRenderer string          `json:"dir_chart_renderer"`
+	Findings         int             `json:"findings"`
+	Binaries         int             `json:"binaries"`
+	Scripts          int             `json:"scripts"`
+	Components       int             `json:"components"`
+	BySeverity       map[string]int  `json:"by_severity"`
+	ByVulnClass      map[string]int  `json:"by_vuln_class"`
+	CVECount         int             `json:"cve_count"`
+	ServiceCount     int             `json:"service_count"`
+	OpenPortCount    int             `json:"open_port_count"`
 }
 
 func (r *ReportDB) GetSummary(jobID string) (*Summary, error) {
 	s := &Summary{BySeverity: map[string]int{}, ByVulnClass: map[string]int{}}
 	row := r.db.QueryRow(`SELECT target, tool_version, generated_at, kernel_version, arch_summary,
-		endian_summary, file_count, firmware_size, cert_count, rsa_cert_count, services FROM report_meta WHERE job_id = ?`, jobID)
-	var kv, as, es, svc sql.NullString
+		endian_summary, file_count, firmware_size, cert_count, rsa_cert_count, services, dir_breakdown, dir_chart_renderer
+		FROM report_meta WHERE job_id = ?`, jobID)
+	var kv, as, es, svc, dbk, dcr sql.NullString
 	var fc, fs, cc, rcc sql.NullInt64
-	if err := row.Scan(&s.Target, &s.ToolVersion, &s.GeneratedAt, &kv, &as, &es, &fc, &fs, &cc, &rcc, &svc); err != nil {
+	if err := row.Scan(&s.Target, &s.ToolVersion, &s.GeneratedAt, &kv, &as, &es, &fc, &fs, &cc, &rcc, &svc, &dbk, &dcr); err != nil {
 		if err == sql.ErrNoRows {
 			return s, nil // report not ingested (yet) — empty summary, not an error
 		}
@@ -482,6 +493,8 @@ func (r *ReportDB) GetSummary(jobID string) (*Summary, error) {
 	s.KernelVersion, s.ArchSummary, s.EndianSummary = kv.String, as.String, es.String
 	s.FileCount, s.FirmwareSize = int(fc.Int64), fs.Int64
 	s.CertCount, s.RsaCertCount = int(cc.Int64), int(rcc.Int64)
+	s.DirBreakdown = orEmptyArray(json.RawMessage(dbk.String))
+	s.DirChartRenderer = dcr.String
 	if svc.Valid && svc.String != "" {
 		var services []struct {
 			Ports []int `json:"ports"`
@@ -1104,13 +1117,15 @@ func (r *ReportDB) ExportFull(jobID string) ([]byte, error) {
 		BusyboxAudit                              sql.NullString
 		CertCount, RsaCertCount                   sql.NullInt64
 		Services                                  sql.NullString
+		DirBreakdown, DirChartRenderer            sql.NullString
 	}
 	err := r.db.QueryRow(`SELECT target, tool_version, generated_at, kernel_version, arch_summary,
-		endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services
+		endian_summary, file_count, firmware_size, busybox_audit, cert_count, rsa_cert_count, services,
+		dir_breakdown, dir_chart_renderer
 		FROM report_meta WHERE job_id = ?`, jobID).Scan(
 		&meta.Target, &meta.ToolVersion, &meta.GeneratedAt, &meta.KernelVersion, &meta.ArchSummary,
 		&meta.EndianSummary, &meta.FileCount, &meta.FirmwareSize, &meta.BusyboxAudit,
-		&meta.CertCount, &meta.RsaCertCount, &meta.Services)
+		&meta.CertCount, &meta.RsaCertCount, &meta.Services, &meta.DirBreakdown, &meta.DirChartRenderer)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("no report for job %s", jobID)
 	}
@@ -1174,6 +1189,12 @@ func (r *ReportDB) ExportFull(jobID string) ([]byte, error) {
 	}
 	if meta.CertCount.Valid {
 		doc["cert_count"] = meta.CertCount.Int64
+	}
+	if meta.DirBreakdown.Valid && meta.DirBreakdown.String != "" {
+		doc["dir_breakdown"] = json.RawMessage(meta.DirBreakdown.String)
+	}
+	if meta.DirChartRenderer.Valid {
+		doc["dir_chart_renderer"] = meta.DirChartRenderer.String
 	}
 	if meta.RsaCertCount.Valid {
 		doc["rsa_cert_count"] = meta.RsaCertCount.Int64

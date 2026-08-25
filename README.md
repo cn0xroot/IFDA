@@ -384,6 +384,13 @@ persistence.
 Full technical detail (root causes, before/after numbers, test counts) is in
 [`PROGRESS.md`](PROGRESS.md)'s 变更记录 (Chinese). Feature-level summary:
 
+- **v4.1** — Rootfs directory-composition chart on the dashboard (CUDA/CPU-
+  rendered, in-wedge + leader-line labels), compare-scan function-level diff
+  (mnemonic-fingerprint matching, not full BinDiff-style structural matching),
+  a fixed scan-progress percentage (was non-monotonic and squeezed Ghidra
+  decompile progress into a fixed 3-point range), a live per-scan
+  architecture-distribution chart, and a re-scan button that bypasses the
+  dedup cache.
 - **v4.0** — AI analysis reliability + cross-platform docs. Interrupted
   provider streams (no `[DONE]`/`finish_reason` or `message_stop`/`stop_reason`)
   are now reported as interrupted, keeping the partial output, instead of being

@@ -5,6 +5,65 @@ before/after numbers, test counts) lives in [`PROGRESS.md`](PROGRESS.md)'s
 变更记录 (Chinese). Entries for v3.5 and earlier are summarized in
 [`README.md`](README.md#changelog); this file continues from v3.6 onward.
 
+## v4.1 — 2026-08-25
+
+Rootfs composition visualization, compare-scan function-level diff, and scan
+progress accuracy.
+
+**Rootfs directory-composition chart on the dashboard.** Shows on-disk byte
+share per top-level directory (`/usr`, `/etc`, `/root`, ...) as a labeled
+donut chart — directory name inside each wedge, a leader line out to its
+percentage and formatted size outside the ring for wedges above a legibility
+threshold (very thin slivers are still colored and still listed in the
+adjacent text legend, just not individually labeled on the image itself,
+since real firmware rootfs trees commonly have a dozen-plus top-level dirs
+and cramming a callout onto every one produces an unreadable pile rather than
+more information). Rendering tries a CUDA per-pixel rasterizer first (each
+GPU thread resolves one pixel's wedge membership from polar coordinates) and
+falls back to CPU vector rendering via Pillow when no usable device is
+present; text labels are always composited on the CPU afterward regardless of
+which path drew the wedges, since font rasterization isn't GPU-kernel work.
+Verified against a full real-firmware analysis run on an actual CUDA GPU, and
+against the CPU fallback path.
+
+**Compare-scan function-level diff.** Beyond the existing MD5-based file diff,
+functions are now fingerprinted during disassembly (a mnemonic-histogram
+hash over each function's body, computed in the same instruction pass that
+already extracts call edges — no added disassembly cost) and diffed
+client-side between two same-path binaries, matched by name: added / removed
+/ modified / unchanged, visualized as a pie chart through the same CUDA/CPU
+renderer, generalized to accept any named-value slices (not just directory
+byte counts). This is name-based matching, not full BinDiff-style structural
+matching — a function that was only renamed or re-stripped between scans
+shows as one removed + one added, not modified.
+
+**Scan progress accuracy.** The percentage shown while a `--decompile` run's
+Ghidra enrichment stage was active could visibly jump *backward* (a fixed
+tail stage already reported 99% before decompile started, which then began
+its own range below that) and then crawl for the rest of the run, since
+decompile's whole possible-hundreds-of-targets progress was squeezed into a
+fixed 3-point budget regardless of how many targets there actually were. The
+stage percentage scale is now monotonic end-to-end and decompile gets a
+proportionally wider budget. Stages with a natural per-item count
+(disassemble, decompile) now also report a `done`/`total` pair alongside the
+overall percentage, rendered as a distinct secondary progress bar for that
+stage. A live "binaries processed so far, by architecture" chart during the
+disassemble stage (the bulk of a scan's wall time) shows both a client-side
+animated SVG donut (updates immediately, no round trip) and the same
+CUDA/CPU-rendered PNG the dashboard chart uses, side by side. The scan page
+also gained a purely decorative illustration (wafer / chip / drive / generic
+robot and quadruped robot icons, swept by an animated magnifying glass) that
+carries no real progress data and disables its animation under
+`prefers-reduced-motion`.
+
+**Re-scan.** Each completed/failed job row has a re-scan button that
+resubmits the same target with a `force` flag that bypasses the dedup cache
+— a plain resubmit of an unchanged target would otherwise just copy the
+previous cached report verbatim, silently reproducing whatever the old scan
+was missing. `ifda.__version__` bumped 2.6.0 → 2.7.0 to reflect the report
+shape changes above (new dashboard/diff fields, function fingerprints), so
+the dedup cache itself also recognizes pre-upgrade reports as stale.
+
 ## v4.0 — 2026-07-27
 
 AI analysis reliability, plus cross-platform documentation.
