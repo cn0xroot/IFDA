@@ -7,9 +7,14 @@ name = "ifda"
 version = "2.0.0"
 description = "Automated IoT firmware binary analysis — reverse engineering & vulnerability discovery core"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = [
     "capstone>=4.0",
     "pyelftools>=0.29",
+    # GPL-3.0, and deliberately only ever invoked as a subprocess (shutil.which
+    # + subprocess.run in ifda/vuln/cve_bin_tool.py), never imported -- keeping
+    # it at arm's length is what lets this project stay Apache-2.0.
     "cve-bin-tool>=3.4",
     "cryptography>=41.0",
     "Pillow>=10.0",
