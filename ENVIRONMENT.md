@@ -14,6 +14,7 @@
 | `yara-python` | FR-INT-3 YARA 规则桥(无 `data/yara/*.yar` 时该阶段自动跳过) | 可选 |
 | mips/arm/aarch64 交叉编译器 | 造跨架构测试样本(`tests/test_core.py`) | 可选(缺失时相关用例自动 skip) |
 | Ghidra(+ 一个真正的 **JDK**,不是 JRE) | FR-RE-2 反编译伪代码富化(`--decompile`) | 可选(缺失时优雅降级为 no-op) |
+| [`moria`](https://github.com/nmatt0/moria) | FR-ING/FR-EXT 固件识别+解包(`ifda extract`,服务层的"解包"任务类型) | 可选;以子模块形式随仓库附带,用 `scripts/build-moria.sh` 构建(缺失时该任务类型报"不可用",不影响 `analyze`) |
 
 除 Go 版本外,其余组件缺失都不会导致功能报错——只会跳过/降级对应能力(NFR-USE-1 优雅降级)。
 `cve-bin-tool` 是唯一一个"必需但仍会优雅降级"的组件:它是官方推荐的默认路径,但一次网络故障
@@ -157,7 +158,48 @@ java -cp /opt/ghidra/support/LaunchSupport.jar LaunchSupport /opt/ghidra -jdk_ho
 IFDA_GHIDRA_TEST=1 python3 -m pytest tests/ -q   # 应为 24 passed(不再有 skip)
 ```
 
-## 6. 端到端冒烟测试
+## 6. moria(固件解包,可选)
+
+`moria`(C++20,MIT,自包含二进制,无需 root)负责 FR-ING/FR-EXT:识别+解包一个原始固件
+镜像(整块 flash dump、分区镜像、厂商升级包)里的文件系统/归档/内核镜像区域。IFDA 自己不
+重新实现这块——`ifda extract` 只是薄薄一层调用 `moria -j -e`、把它的 JSON 结果整理成
+`{regions: [...]}`(见 `ifda/ingest`)。解包出来可能不止一个候选文件系统区域(真实的多
+bank/多分区固件很常见),挑哪个交给 `analyze` 是人工决定,不自动猜。
+
+moria 以 **git 子模块**的形式随本仓库附带在 `moria/`,并锁定到一个具体 commit。推荐直接构建
+仓库内的这一份,而不是单独 clone 一个:
+
+```bash
+sudo apt install cmake g++ zlib1g-dev liblzma-dev liblz4-dev libzstd-dev  # 通常已经有
+git submodule update --init moria          # 克隆时带了 --recurse-submodules 就可以跳过
+scripts/build-moria.sh                     # 产物: moria/build/moria
+
+./moria/build/moria --version              # 应打印 moria <版本>
+python3 -m pytest tests/test_ingest.py -q  # 应为 11 passed
+```
+
+**不需要装到 PATH 上。**`ifda/ingest.moria_path()` 的查找顺序是:
+
+1. `$IFDA_MORIA` —— 显式指定某个二进制(release 下载包、另一份检出)。指向不存在的路径时
+   直接判定为"不可用",不会悄悄回退到别的 moria——既然特意指定了,回退就等于掩盖配置错误。
+2. `moria/build/moria` —— 仓库内构建产物,也就是上面这条命令的结果。
+3. `PATH` 上的 `moria` —— 系统或用户级安装,和以前一样能用。
+
+第 2 条优先于第 3 条是有实际原因的:本机 `/usr/local/bin/moria` 是 0.1.0,而仓库锁定的
+commit 构建出来是 0.2.1。没有这个顺序时,一份锁定了版本的检出实际跑的是宿主机上碰巧装着
+的那个更旧的版本,而且从任何输出里都看不出来。
+
+三者都没有时,`ifda extract` 返回 `{"error": "moria not installed"}`,`analyze` 流程不受
+影响(NFR-USE-1)。服务启动时会打印实际用的是哪一个:
+
+```
+moria firmware extraction: moria 0.2.1
+```
+
+缺失时则是一行明确的提示,并且网页上的"解包"按钮会直接置灰(`/healthz` 的 `moria_version`
+字段为空),不用等提交任务失败才发现。
+
+## 7. 端到端冒烟测试
 
 ```bash
 mkdir -p /tmp/smoke/rootfs/bin && cd /tmp/smoke
@@ -177,11 +219,12 @@ curl -s -XPOST localhost:18099/api/jobs -H 'Content-Type: application/json' \
 curl -s localhost:18099/api/jobs/<id>              # status 应变为 completed,findings > 0
 ```
 
-## 7. 一次性检查清单
+## 8. 一次性检查清单
 
 ```bash
 go version                                    # >= 1.22
 python3 -m pytest tests/ -q                   # 23 passed, 1 skipped(无交叉编译器则更少)
 cd service && go build -o ifda-service . && go vet ./...
 IFDA_GHIDRA_TEST=1 python3 -m pytest tests/ -q -k decompile   # 有 Ghidra 时应通过
+./moria/build/moria --version && python3 -m pytest tests/test_ingest.py -q # 应为 11 passed
 ```

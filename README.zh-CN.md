@@ -79,6 +79,15 @@ Python 核心是一个库 + CLI。项目选择的**混合架构**把批量/大�
 **可选增强能力**
 - [Ghidra](https://ghidra-sre.org/)（headless 模式）—— 为发现结果提供反编译伪代码增强
 
+**固件识别与解包（FR-ING/FR-EXT）**
+- [**moria**](https://github.com/nmatt0/moria) —— C++20，MIT 协议。以 git 子模块的形式随仓库
+  附带在 [`moria/`](moria) 并锁定到具体 commit。它识别原始镜像内部的结构（文件系统、内核、
+  bootloader、归档），给出字节偏移和置信度，并递归解包，全程不需要 root。`-j` 输出 JSON，
+  [`ifda/ingest`](ifda/ingest) 解析它，转成"解包"任务返回的区域列表。
+  用 [`scripts/build-moria.sh`](scripts/build-moria.sh) 构建；产物是自包含的单个二进制
+  （签名集在构建期嵌入）。查找顺序是 `$IFDA_MORIA` → 仓库内构建产物 → `PATH` 上的 `moria`，
+  这样一份检出跑的就是它锁定的那个 commit，而不是宿主机上碰巧装着的版本。
+
 ## 参考与致谢
 
 - [**EMBA**](https://github.com/e-m-b-a/emba) —— 一个开源 IoT 固件分析工具，它在 CVE 关联
@@ -89,6 +98,17 @@ Python 核心是一个库 + CLI。项目选择的**混合架构**把批量/大�
   这些前期工作。
 - [**cve-bin-tool**](https://github.com/intel/cve-bin-tool)（OpenSSF 旗下项目）—— FR-VUL-1
   广域 CVE 覆盖背后的实际引擎，也是 EMBA 自己用来做 CVE 关联的同一个工具。
+- [**moria**](https://github.com/nmatt0/moria) —— FR-ING/FR-EXT 背后的解包引擎，以子模块形式
+  附带（见上）。感谢作者做出了一个无外部依赖的单文件二进制——正是这一点让本项目的离线解包
+  路径成为可能。
+- [**unblob**](https://github.com/onekey-sec/unblob)（OneKey，MIT 协议）—— 作为解包引擎评估过，
+  **未**集成。它的格式覆盖比 moria 广（78+ 对约 25 种），而且自带 Python API，与本项目的代码
+  形态天然契合；但它的 Python 包本身不解包任何东西，实际工作全部外包给一批外部解包器，其中
+  两个（SquashFS 用的 `sasquatch`、以及打过补丁的 `e2fsprogs`）是 OneKey 自己维护的分支，以
+  独立 `.deb` 分发，并非发行版软件包。这会把"装一个分析器"变成"装一个分析器外加一个第三方
+  软件源"，与本项目其余可选工具一贯的离线、单二进制姿态不符。遇到冷门格式或嵌套层级很深的
+  镜像时它仍是更好的选择；`$IFDA_MORIA` 不是一个通用的解包器开关，真要接入 unblob，需要在
+  [`ifda/ingest`](ifda/ingest) 的区域列表契约后面再实现一个后端——这个口子是特意留着的。
 
 ## 平台支持
 
@@ -115,6 +135,11 @@ pip install yara-python    # 可选: 存在 data/yara/*.yar 时启用 YARA 阶�
 
 # Go 服务层（可选——仅在需要 REST API + Web UI 时安装）
 cd service && go build -o ifda-service .                # Go 1.22+
+
+# 固件解包（可选——仅在需要"解包"任务类型时构建）。
+# moria 以子模块形式附带，新克隆建议带 --recurse-submodules：
+git submodule update --init moria
+scripts/build-moria.sh    # 需要 cmake 和 C++20 编译器
 ```
 
 ### 在 macOS 上运行
@@ -350,6 +375,15 @@ ARM Thumb-2、AArch64），覆盖：预置的命令注入验收用例（源→�
 完整技术细节（根因分析、修复前后对比数据、测试数量）见
 [`PROGRESS.md`](PROGRESS.md) 的"变更记录"章节。以下是功能层面的摘要：
 
+- **v4.3** —— 网页界面的信息架构、列表密度与文字对比度:页头收回一行,钉住当前报告对应的镜像
+  而不是标语;顶层标签十一个收到五个(1600px 下 Services 被裁断、AI 分析在屏幕外);仪表盘改用
+  一条严重度分布条,五档全部计数;发现按组件分组、大组默认折叠,48 条连号 CVE 从占满一屏变成
+  一行;二进制表行高锁死 46px、加固改成固定六格,**MD5 仍完整显示**;`--muted` 在七套主题下
+  逐一提到 4.5:1 以上。只改 `web/index.html`,前端是 embed 进二进制的,需重新编译。
+- **v4.2** —— 集成 [moria](https://github.com/nmatt0/moria) 做固件识别与解包(FR-ING/FR-EXT):
+  新增"解包"任务类型,对原始固件镜像跑 moria(外部可选工具,和 Ghidra/cve-bin-tool 一样优雅
+  降级),得到候选文件系统区域列表。挑哪个区域实际拿去深度分析交给人工决定——真实的多分区
+  固件经常有不止一个文件系统区域,自动瞎猜可能分析到没在用的备用 bank。
 - **v4.1** —— 仪表盘新增根文件系统目录占比图(CUDA/CPU 渲染,扇形内标名称+扇形外引线
   标注百分比/大小),对比扫描新增函数级 diff(按助记符指纹+函数名匹配,不是 BinDiff 那种
   结构匹配),修复扫描进度百分比(此前会倒退,且 Ghidra 反编译阶段被压缩进固定 3 个百分点),
@@ -406,6 +440,25 @@ ARM Thumb-2、AArch64），覆盖：预置的命令注入验收用例（源→�
   分析、跨二进制污点分析、CVE 关联、CycloneDX SBOM、优先级排序 + 分诊状态
   持久化），嵌入式敏感信息与脚本注入检测，文件系统加固检查，可选 Ghidra
   反编译增强，以及 Go 服务层 + Alpine.js Web UI。
+
+## 许可协议
+
+Apache License 2.0，全文见 [`LICENSE`](LICENSE)。
+
+选 Apache-2.0 而不是 MIT，有两个对"双用途分析工具"来说重要的理由：它明确授予专利许可；
+并且要求任何再分发修改版的人必须声明修改，这样一个改了检测逻辑的分支能够和本项目区分开。
+
+第三方组件各自保留原有协议：
+
+| 组件 | 协议 | 使用方式 |
+|---|---|---|
+| [moria](https://github.com/nmatt0/moria) | MIT | 以 git 子模块形式位于 [`moria/`](moria)，适用它自己的 `LICENSE`。以子进程方式调用。 |
+| [cve-bin-tool](https://github.com/intel/cve-bin-tool) | GPL-3.0 | 只以子进程方式调用，从不 import（`ifda/vuln/cve_bin_tool.py` 里是 `shutil.which` + `subprocess.run`）。以独立进程运行一个 GPL 程序，并不会让本项目成为它的衍生作品——这正是本项目可以自由选择协议的前提。 |
+| [Ghidra](https://ghidra-sre.org/) | Apache-2.0 | 可选；以 headless 模式子进程调用。 |
+| [Alpine.js](https://alpinejs.dev/) | MIT | 内嵌于 `service/web/vendor/alpine.min.js`，原样分发。 |
+| capstone、pyelftools、modernc.org/sqlite | BSD | 作为库 import；均为宽松协议，与 Apache-2.0 兼容。 |
+
+如果你要再分发构建产物，请随附 `LICENSE`，并保留内嵌的 Alpine.js 与子模块的协议文件。
 
 ## 后续迭代计划
 

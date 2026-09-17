@@ -30,7 +30,11 @@ cd service
 Flags: `-addr` (listen address), `-core` (dir containing the `ifda` package;
 auto-detected by walking up from cwd), `-workers` (concurrent analyses, default
 2), `-queue` (max queued jobs), `-data` (dir for triage state + uploads; default
-`$TMPDIR/ifda-service`).
+`$TMPDIR/ifda-service`), `-analyze-timeout` (hard wall-clock cap per analyze
+subprocess, default 2h — a safety net against a truly hung run, not a target-size
+estimate; raise it for unusually large targets, e.g. an automotive/infotainment
+image with thousands of binaries including embedded Chromium, which can need
+well over an hour just for the disassemble stage).
 
 Requires `python3` with the `ifda` package importable from `-core` (i.e. the
 core's deps installed: `python3-capstone python3-pyelftools`).
@@ -82,7 +86,7 @@ back in.
 
 | Method & path | Purpose |
 |---|---|
-| `POST /api/jobs` `{"target":"/path"}` | Enqueue an analysis; returns the job (202). Dedup cache returns a cached result for an unchanged target. |
+| `POST /api/jobs` `{"target":"/path"}` | Enqueue an analysis; returns the job (202). Dedup cache returns a cached result for an unchanged target. Add `"kind":"extract"` to identify + unpack a raw firmware image via `moria` (FR-ING/FR-EXT; needs a moria build — see below) instead — the completed job carries `regions` (moria's findings, each with an `offset`/`type`/`status`/`usable`/`path`), not a findings report; pick a region and resubmit its `path` as a normal (or another `extract`) job. Add `"force":true` to bypass the dedup cache (e.g. the web UI's re-scan button); meaningless for `kind:"extract"`, which never uses the cache. |
 | `GET /api/jobs` | List jobs (newest first) with status + progress. |
 | `GET /api/jobs/{id}` | One job: status, progress %, stage, detail, counts. |
 | `GET /api/jobs/{id}/events` | **SSE** stream of job progress until terminal. |
@@ -120,17 +124,51 @@ same firmware.
 `web/index.html` + vendored `web/vendor/alpine.min.js`, both embedded into the
 binary (no CDN, no build step — works air-gapped). Built on Alpine.js:
 
-- **Submit / upload** a target (server path or file upload).
-- **Job list** with live SSE progress bars.
-- **Dashboard** tab: finding/critical/high/binary/CVE cards + severity and
-  vuln-class distribution bars.
-- **Findings** tab: filter by severity toggles, vuln class, triage state,
-  confidence threshold, and full-text search; sort by severity/confidence;
-  expand a finding for evidence, taint path, and decompiled pseudocode; triage
-  inline (confirm / false-positive / accept-risk / reset).
-- **Binaries** tab: per-binary arch, libc, mitigation chips
-  (NX/Canary/RELRO/PIE/FORTIFY, color-coded), function count, CVEs.
+- **Header**: the open report's image name with its architecture, kernel and size; a
+  segmented group for Compare / CVE database / Sensitive dictionary / AI settings; and a
+  user menu holding the things set once per session (triage display name, language, theme).
+- **Submit / upload** a target (server path or file upload) at the top of the left rail.
+- **Job list** with live SSE progress. Every field in a card is single-line and clips, with
+  the full value on its title attribute.
+- Five primary tabs. **Dashboard**, **Findings**, **Inventory**, **Strings** and **AI
+  analysis**; Inventory and Strings each open a second-level segmented control (Inventory:
+  Binaries / Scripts / Components / Files / BusyBox / Services — Strings: all strings /
+  sensitive).
+- **Dashboard**: total findings with a proportional severity bar covering all five levels,
+  an inventory tile row, and the BusyBox / network-service / rootfs-composition panels.
+- **Findings**: severity pills carrying each level's count, plus filters for vuln class,
+  triage state, confidence threshold and full-text search; sort by severity/confidence;
+  group by component (a group of more than five starts collapsed) or show a flat list;
+  expand a finding for evidence, taint path, and decompiled pseudocode; triage inline
+  (confirm / false-positive / accept-risk / reset).
+- **Binaries**: fixed-height rows; per-binary path (the shared directory prefix truncates,
+  the file name never does), arch, libc, a six-slot hardening strip
+  (NX / CN / RL / PI / FT / SY, colour-coded on / partial / off, with a legend), CVE count,
+  string count, function count, and the full MD5.
 - **Export** buttons: JSON / Markdown / SBOM download.
+
+Colour tokens are per-theme CSS custom properties on `[data-theme]`. `--muted` is the
+lightest value still used for text and is picked per theme to clear 4.5:1 against that
+theme's `--panel`; `--dim` is the dimmer step and is for hairlines and decorative glyphs
+only, never text.
+
+## Firmware extraction (moria)
+
+The `extract` job kind shells out to `python3 -m ifda.cli extract`, which runs `moria`. The
+binary is resolved by `ifda/ingest` as `$IFDA_MORIA`, then the in-tree build of the pinned
+submodule at `moria/build/moria`, then `moria` on `PATH` — build it with
+`scripts/build-moria.sh` from the repo root.
+
+The service probes this **once at startup** and logs what answered:
+
+```
+moria firmware extraction: moria 0.2.1
+```
+
+The same string is served as `moria_version` on `GET /healthz` (empty when there is no moria),
+which is what the web UI reads to disable the Extract button with a hint instead of letting a
+submitted job fail. Rebuilding or installing moria therefore needs a service restart to be
+noticed — the probe is not repeated per job.
 
 ## Not yet / production notes
 

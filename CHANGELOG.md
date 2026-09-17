@@ -5,6 +5,92 @@ before/after numbers, test counts) lives in [`PROGRESS.md`](PROGRESS.md)'s
 变更记录 (Chinese). Entries for v3.5 and earlier are summarized in
 [`README.md`](README.md#changelog); this file continues from v3.6 onward.
 
+## v4.3 — 2026-09-16
+
+Web UI: information architecture, list density, and text contrast. No API or schema change —
+`web/index.html` only. The frontend is embedded via `//go:embed web/*`, so the service binary
+has to be rebuilt for any of this to appear.
+
+`ifda.__version__` moves 2.7.0 → 2.8.0 to mark the release. Note that this string is mixed
+into the dedup key, so every previously-cached target is now treated as stale and a
+re-submit runs a full analysis instead of copying the cached report. Nothing in the report
+schema changed here — the same JSON is simply rendered differently — so that re-analysis
+buys no new data. Pin the value back to 2.7.0 if you would rather keep the cache warm.
+
+**The header fits on one line.** It carried a wordmark, a four-word tagline, a summary
+string, a `flex:1` display-name input and six equal-weight buttons in a wrapping row. At
+1600px the tagline broke into four lines and the input took roughly 700px for a value that
+is typed once. The tagline is login-page copy and is gone from the header; what is pinned
+there now is the image the open report belongs to, with its architecture, kernel and size.
+The four tool buttons became one segmented group, and display name, language and theme
+moved into the user menu.
+
+**Five primary tabs instead of eleven.** Eleven did not fit: Services was clipped mid-word
+and AI analysis was off-screen entirely, with no overflow affordance. Binaries, Scripts,
+Components, Files, BusyBox and Services now sit under one **Inventory** tab, and the two
+string views under **Strings**, each as a second-level segmented control that appears only
+under the tab that owns it.
+
+**The dashboard leads with the severity split.** Five equal cards gave a total, two
+severities, a binary count and a CVE count the same weight, and only critical/high had a
+number anywhere. One wide card now carries the total and a proportional severity bar with
+every level counted; the remaining inventory counts drop to a tile row at three-quarter
+scale.
+
+**Findings are grouped by component.** A flat list gave one card per finding, so a run of
+forty-eight consecutive tcpdump CVEs filled the viewport with near-identical rows. The
+findings on the page are grouped into component bands carrying the count and the severity
+split; a group of more than five starts collapsed. Inside a group the row drops the
+component prefix the band already states. Severity toggles were five unlabelled coloured
+circles (C/H/M/L/I); they are now named pills carrying that severity's count.
+
+**One row, one height in the binaries table.** The mitigation column wrapped six
+variable-width chips onto three lines and the CVE column printed every id inline, so a
+single busybox row ran past 200px tall and no column lined up with its neighbour.
+Mitigations became six fixed slots (NX/CN/RL/PI/FT/SY) in a constant order with a legend,
+CVEs became a count that expands, and rows are a fixed 46px. MD5 stays full-width and
+full-length — it is the value people copy out of this table. The path column truncates the
+shared directory prefix from the left so the file name is never cut.
+
+**Job cards no longer paint outside the rail.** A running job's `detail` string is a full
+path to the file being scanned, and it sat in a wrapping meta row with no width constraint,
+so it drew across the rail divider and over the report pane. Every field in a card is now
+single-line and clips, with the full value on the title attribute.
+
+**Muted text meets the 4.5:1 contrast floor in all seven themes.** `--muted` carries meta
+rows, log timestamps, table headers and every caption, and at `#64748b` on `--panel` it
+measured 3.4:1 in the default theme. Each theme's value was raised to clear 4.5:1 against
+its own panel colour; the previous value moved to a new `--dim` used only for hairlines and
+decorative glyphs. The light theme already passed and is unchanged.
+
+## v4.2 — 2026-09-11
+
+Firmware identification and extraction (FR-ING/FR-EXT), via [moria](https://github.com/nmatt0/moria).
+
+**moria is bundled as a git submodule** at `moria/`, pinned to a known commit, and built
+with `scripts/build-moria.sh` into `moria/build/moria`. `ifda/ingest` resolves the binary as
+`$IFDA_MORIA`, then that in-tree build, then `moria` on `PATH`, so a checkout runs the commit
+it pinned instead of whatever the host happens to have installed — on the machine this was
+developed against those were different versions (0.2.1 pinned, 0.1.0 installed), silently.
+Neither the submodule nor the build is required: a system install still works, and with
+neither one the extract job kind reports "not available" rather than breaking anything else.
+The service logs which build answered at startup and reports it as `moria_version` on
+`/healthz`, so the web UI can disable the Extract button up front instead of letting a job
+fail after submission.
+
+Adds a new job kind alongside "analyze": submit `{"kind":"extract","target":"/path/to/image.bin"}`
+against a raw firmware image (a flash dump, a partition image, a vendor update package) and the
+service identifies + unpacks it via `moria` (an external, opt-in tool — same graceful-degradation
+posture as Ghidra/cve-bin-tool elsewhere: missing means a clear error on that job, not a crash of
+anything else). The completed job carries a `regions` list (offset, type, category, confidence,
+extraction status, path, file/dir counts, and any warnings moria reported) instead of a findings
+report. Picking which region — if more than one — is "the" rootfs to analyze is left to a human:
+real multi-partition firmware routinely has more than one filesystem region (dual-bank A/B images,
+bootloader + kernel + rootfs in one dump), and guessing wrong would silently analyze an inactive
+backup bank instead of the live one. Each usable region in the web UI can be submitted either as a
+normal analyze target or as another extract pass (moria doesn't always fully recurse through every
+nested compression format in one hop — a region can itself still be packed).
+
 ## v4.1 — 2026-08-25
 
 Rootfs composition visualization, compare-scan function-level diff, and scan

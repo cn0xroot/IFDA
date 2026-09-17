@@ -85,6 +85,17 @@ that drives this core one job at a time via the CLI. The JSON model
 **Optional enrichment**
 - [Ghidra](https://ghidra-sre.org/) (headless mode) — decompiled pseudocode enrichment for findings
 
+**Firmware identification & extraction (FR-ING/FR-EXT)**
+- [**moria**](https://github.com/nmatt0/moria) — C++20, MIT. Bundled as a git submodule at
+  [`moria/`](moria) and pinned to a known commit. Identifies structures inside a raw image
+  (filesystems, kernels, bootloaders, archives) with byte offsets and confidence scores, and
+  unpacks them recursively without root. `-j` gives JSON, which is what [`ifda/ingest`](ifda/ingest)
+  parses into the region list the "extract" job kind returns.
+  Build it with [`scripts/build-moria.sh`](scripts/build-moria.sh); the binary is self-contained
+  (signature sets are embedded at build time). Resolution order is `$IFDA_MORIA`, then the
+  in-tree build, then `moria` on `PATH` — so a checkout runs the commit it pinned rather than
+  whatever the host happens to have installed.
+
 ## References & acknowledgements
 
 - [**EMBA**](https://github.com/e-m-b-a/emba) — the open-source IoT firmware analyzer whose
@@ -97,6 +108,20 @@ that drives this core one job at a time via the CLI. The JSON model
 - [**cve-bin-tool**](https://github.com/intel/cve-bin-tool) (an OpenSSF project) — the actual
   engine behind FR-VUL-1's broad CVE coverage, and the same tool EMBA itself wraps for CVE
   correlation.
+- [**moria**](https://github.com/nmatt0/moria) — the extraction engine behind FR-ING/FR-EXT,
+  bundled as a submodule (see above). Thanks to its author for a tool that is a single
+  dependency-free binary, which is what makes an air-gapped extract path practical here.
+- [**unblob**](https://github.com/onekey-sec/unblob) (OneKey, MIT) — evaluated as the extraction
+  engine and **not** integrated. It covers more formats than moria (78+ against roughly 25) and
+  has a Python API that would sit naturally beside this codebase, but the Python package alone
+  does not extract anything: it shells out to a large set of external extractors, two of which
+  (`sasquatch` for SquashFS, and a patched `e2fsprogs`) are OneKey-maintained forks distributed
+  as their own `.deb` files rather than distro packages. That turns "install the analyzer" into
+  "install the analyzer plus a third-party package repository", which does not fit the
+  air-gapped, single-binary posture the rest of the optional tooling here follows. It remains
+  the better choice for an exotic or heavily-nested image; `$IFDA_MORIA` is not a general
+  extractor switch, so wiring unblob in would mean a second backend behind
+  [`ifda/ingest`](ifda/ingest)'s region-list contract, which is deliberately left open.
 
 ## Platform support
 
@@ -125,6 +150,11 @@ pip install yara-python    # optional: enables the YARA stage if data/yara/*.yar
 
 # Go service layer (optional — only if you want the REST API + web UI)
 cd service && go build -o ifda-service .                # Go 1.22+
+
+# Firmware extraction (optional — only for the "extract" job kind).
+# moria ships as a submodule, so a fresh clone wants --recurse-submodules:
+git submodule update --init moria
+scripts/build-moria.sh    # needs cmake + a C++20 compiler
 ```
 
 ### Running on macOS
@@ -384,6 +414,20 @@ persistence.
 Full technical detail (root causes, before/after numbers, test counts) is in
 [`PROGRESS.md`](PROGRESS.md)'s 变更记录 (Chinese). Feature-level summary:
 
+- **v4.3** — Web UI information architecture, list density and text contrast: the header
+  fits one line and pins the open report's image instead of a tagline; eleven top-level tabs
+  become five (Services was clipped and AI analysis off-screen at 1600px); the dashboard
+  leads with a severity bar that counts all five levels; findings are grouped by component
+  with large groups collapsed, so a run of forty-eight consecutive CVEs is one line; the
+  binaries table has fixed 46px rows and six fixed hardening slots, with MD5 still shown in
+  full; and `--muted` was raised to clear 4.5:1 contrast in every theme. `web/index.html`
+  only — rebuild the binary, the frontend is embedded.
+- **v4.2** — Firmware identification and extraction (FR-ING/FR-EXT) via
+  [moria](https://github.com/nmatt0/moria): a new "extract" job kind unpacks a raw firmware
+  image into candidate filesystem regions (moria is an optional external tool, same
+  graceful-degradation posture as Ghidra/cve-bin-tool). Picking which region to actually analyze
+  is left to a human — real multi-partition firmware routinely has more than one filesystem
+  region, and guessing wrong would silently analyze the wrong bank.
 - **v4.1** — Rootfs directory-composition chart on the dashboard (CUDA/CPU-
   rendered, in-wedge + leader-line labels), compare-scan function-level diff
   (mnemonic-fingerprint matching, not full BinDiff-style structural matching),
@@ -465,6 +509,27 @@ Full technical detail (root causes, before/after numbers, test counts) is in
   triage persistence), embedded-secrets and script-injection detection,
   filesystem hardening, optional Ghidra decompilation, and the Go service
   layer + Alpine.js web UI.
+
+## License
+
+Apache License 2.0 — see [`LICENSE`](LICENSE).
+
+Apache-2.0 rather than MIT for two reasons that matter to a dual-use analysis tool: it
+grants patent rights explicitly, and it requires anyone redistributing a modified version
+to say so, which keeps a fork that changes detection behaviour distinguishable from this one.
+
+Third-party components keep their own licenses:
+
+| Component | License | How it is used |
+|---|---|---|
+| [moria](https://github.com/nmatt0/moria) | MIT | Git submodule under [`moria/`](moria); its own `LICENSE` governs it. Invoked as a subprocess. |
+| [cve-bin-tool](https://github.com/intel/cve-bin-tool) | GPL-3.0 | Invoked as a subprocess only, never imported (`shutil.which` + `subprocess.run` in `ifda/vuln/cve_bin_tool.py`). Running a GPL program from a separate process does not make this project a derivative work of it, which is what leaves this license choice open. |
+| [Ghidra](https://ghidra-sre.org/) | Apache-2.0 | Optional; invoked as a subprocess in headless mode. |
+| [Alpine.js](https://alpinejs.dev/) | MIT | Vendored at `service/web/vendor/alpine.min.js`, served as-is. |
+| capstone, pyelftools, modernc.org/sqlite | BSD | Imported as libraries; all permissive and Apache-2.0 compatible. |
+
+If you redistribute a build, ship `LICENSE` with it, and keep the vendored Alpine.js and
+submodule license files intact.
 
 ## Next iterations
 

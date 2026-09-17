@@ -739,12 +739,12 @@ cd service &amp;&amp; go build -o ifda-service .</pre>
     <h2 class="sec-title" data-i18n="cl_title">最近几个版本</h2>
     <p class="sec-sub" data-i18n="cl_sub">完整记录见仓库里的 <span class="mono">CHANGELOG.md</span>(英文)与 <span class="mono">PROGRESS.md</span>(中文,含根因和验证细节)。</p>
     <div class="tl">
+      <div class="tl-item"><span class="v">v4.3</span><span class="d">2026-09-16</span><p data-i18n="cl_v43">网页界面的信息架构与密度:页头收回一行并钉住当前报告的镜像;顶层标签十一个收到五个;仪表盘改用五档全计数的严重度分布条;发现按组件分组、大组默认折叠;二进制表行高固定、加固改成六格矩阵;七套主题的浅色文字统一提到 4.5:1 对比度。</p></div>
+      <div class="tl-item"><span class="v">v4.2</span><span class="d">2026-09-11</span><p data-i18n="cl_v42">固件识别与解包(FR-ING/FR-EXT):新增"解包"任务类型,对原始固件镜像跑 moria,得到候选文件系统区域列表;挑哪个区域拿去深度分析交给人工,避免自动猜错分析到没在用的备用 bank。</p></div>
+      <div class="tl-item"><span class="v">v4.1</span><span class="d">2026-08-25</span><p data-i18n="cl_v41">仪表盘新增根文件系统目录占比图;对比扫描新增函数级 diff(助记符指纹匹配);修复扫描进度百分比倒退与 Ghidra 阶段被压缩进 3 个百分点的问题。</p></div>
       <div class="tl-item"><span class="v">v4.0</span><span class="d">2026-07-27</span><p data-i18n="cl_v40">AI 分析可靠性:被中断的服务商流不再当作"已完成"保存(保留部分输出并标为中断);修复打开一个扫描却显示另一个扫描缓存结果的问题;新增 Linux/macOS 跨平台说明与 Mac 安装步骤。</p></div>
       <div class="tl-item"><span class="v">v3.9</span><span class="d">2026-07-27</span><p data-i18n="cl_v39">AI 分析运行期的动态反馈:常驻状态条(脉冲点、分阶段文案、秒表、发丝扫光)、流式打字光标、自动跟随尾部并让位于手动滚动。</p></div>
       <div class="tl-item"><span class="v">v3.8</span><span class="d">2026-07-26</span><p data-i18n="cl_v38">AI 分析扫描结果 + AI 服务商配置管理,全部在 Go 服务层实现,Python 核心零改动。</p></div>
-      <div class="tl-item"><span class="v">v3.7</span><span class="d">2026-07-11</span><p data-i18n="cl_v37">内核版本 CVE 关联(Dirty COW / Dirty Pipe 精确区间匹配)+ 修复内核 banner 扫描上限截断 bug。</p></div>
-      <div class="tl-item"><span class="v">v3.6</span><span class="d">2026-07-11</span><p data-i18n="cl_v36">新增路径遍历检测(复用污点引擎)与鉴权逻辑弱点检测(非常量时间比较识别)。</p></div>
-      <div class="tl-item"><span class="v">v3.5</span><span class="d">2026-07-08</span><p data-i18n="cl_v35">新增网络服务识别(WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi),独立标签页 + 仪表盘展示。</p></div>
     </div>
   </div>
 </section>
@@ -940,12 +940,12 @@ const I18N = {
   cl_eyebrow:{en:"Changelog",zh:"更新日志"}, cl_title:{en:"Recent versions",zh:"最近几个版本"},
   cl_sub:{en:'Full history is in the repo\'s <span class="mono">CHANGELOG.md</span> (English) and <span class="mono">PROGRESS.md</span> (Chinese, with root causes and verification detail).',
           zh:'完整记录见仓库里的 <span class="mono">CHANGELOG.md</span>(英文)与 <span class="mono">PROGRESS.md</span>(中文，含根因和验证细节)。'},
+  cl_v43:{en:"Web UI information architecture and density: the header fits one line and pins the open report's image; eleven top-level tabs become five; the dashboard leads with a severity bar counting all five levels; findings are grouped by component with large groups collapsed; the binaries table has fixed-height rows and a six-slot hardening strip; and muted text was raised to 4.5:1 contrast across all seven themes.",zh:"网页界面的信息架构与密度:页头收回一行并钉住当前报告的镜像;顶层标签十一个收到五个;仪表盘改用五档全计数的严重度分布条;发现按组件分组、大组默认折叠;二进制表行高固定、加固改成六格矩阵;七套主题的浅色文字统一提到 4.5:1 对比度。"},
+  cl_v42:{en:"Firmware identification and extraction (FR-ING/FR-EXT): a new \"extract\" job kind runs moria over a raw firmware image and returns candidate filesystem regions; picking which one to analyze is left to a human, so an inactive backup bank is never silently analyzed instead of the live one.",zh:"固件识别与解包(FR-ING/FR-EXT):新增\"解包\"任务类型,对原始固件镜像跑 moria,得到候选文件系统区域列表;挑哪个区域拿去深度分析交给人工,避免自动猜错分析到没在用的备用 bank。"},
+  cl_v41:{en:"Rootfs directory-composition chart on the dashboard; function-level diff in compare-scan (mnemonic-fingerprint matching); fixed scan progress going backwards and the Ghidra stage being squeezed into three percentage points.",zh:"仪表盘新增根文件系统目录占比图;对比扫描新增函数级 diff(助记符指纹匹配);修复扫描进度百分比倒退与 Ghidra 阶段被压缩进 3 个百分点的问题。"},
   cl_v40:{en:"AI analysis reliability: an interrupted provider stream is no longer stored as \"done\" (partial output kept, marked interrupted); fixed one scan showing another scan's cached result; added Linux/macOS platform notes and Mac setup steps.",zh:"AI 分析可靠性:被中断的服务商流不再当作\"已完成\"保存(保留部分输出并标为中断);修复打开一个扫描却显示另一个扫描缓存结果的问题;新增 Linux/macOS 跨平台说明与 Mac 安装步骤。"},
   cl_v39:{en:"Live feedback during an AI run: a persistent status strip (pulse, phase label, elapsed clock, sweep), a streaming caret, and follow-the-tail output that yields to manual scrolling.",zh:"AI 分析运行期的动态反馈:常驻状态条(脉冲点、分阶段文案、秒表、发丝扫光)、流式打字光标、自动跟随尾部并让位于手动滚动。"},
   cl_v38:{en:"AI-assisted analysis of scan results + AI provider config management, entirely in the Go service layer, zero changes to the Python core.",zh:"AI 分析扫描结果 + AI 服务商配置管理，全部在 Go 服务层实现，Python 核心零改动。"},
-  cl_v37:{en:"Kernel-version CVE correlation (precise Dirty COW / Dirty Pipe range matching) + fixed a kernel-banner scan-cap truncation bug.",zh:"内核版本 CVE 关联(Dirty COW / Dirty Pipe 精确区间匹配)+ 修复内核 banner 扫描上限截断 bug。"},
-  cl_v36:{en:"Added path-traversal detection (reusing the taint engine) and auth-logic-weakness detection (non-constant-time comparison).",zh:"新增路径遍历检测(复用污点引擎)与鉴权逻辑弱点检测(非常量时间比较识别)。"},
-  cl_v35:{en:"Added network service identification (WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi) with its own tab and dashboard cards.",zh:"新增网络服务识别(WEB/SSH/FTP/Telnet/gSOAP/DNS/SNMP/UPnP/WiFi)，独立标签页 + 仪表盘展示。"},
 
   resp1_h:{en:"⚠ Authorized Use Statement",zh:"⚠ 授权使用声明"},
   resp1_d:{en:"Only analyze firmware you own or have written authorization to assess. This is a defensive security research tool and assumes no liability for misuse.",zh:"仅可分析你拥有或已获得书面授权评估的固件。这是一套防御性安全研究工具，不承担因滥用造成的任何后果。"},
