@@ -2,6 +2,7 @@
 
     ifda analyze <path> [--json out.json] [--md out.md] [--chart out.png] [--triage triage.json]
     ifda chart <slices.json> <out.png>
+    ifda extract <image> --out <dir>
     ifda triage <triage.json> <finding_id> <state>
 """
 
@@ -18,6 +19,7 @@ from .model import TriageState
 from .vuln import TriageStore
 from .vuln.cve import load_db
 from .vuln.cve_bin_tool import cve_bin_tool_available, list_checkers, db_stats
+from .ingest import identify_and_extract
 
 
 def _cmd_analyze(args) -> int:
@@ -67,6 +69,36 @@ def _cmd_chart(args) -> int:
         slices = json.load(fh)
     renderer = render_pie_chart(slices, args.out)
     print(json.dumps({"renderer": renderer}))
+    return 0
+
+
+def _cmd_extract(args) -> int:
+    """FR-ING/FR-EXT: identifies and extracts a raw firmware image via
+    `moria` (see ifda/ingest). Deliberately does not pick "the" rootfs among
+    however many filesystem regions it finds -- that's a human call, made by
+    resubmitting one of the reported region paths as either another
+    `extract` (if it's still packed) or an `analyze` target (if it's a real
+    directory tree) via the service layer, not automated here."""
+    def emit(stage: str, pct: int, detail: str = "") -> None:
+        if args.progress:
+            sys.stderr.write("@@IFDA@@" + json.dumps({"stage": stage, "pct": pct, "detail": detail}) + "\n")
+            sys.stderr.flush()
+
+    emit("identify", 10, f"running moria against {args.target}")
+    result = identify_and_extract(args.target, args.out)
+    emit("done", 100, f"{len(result.get('regions', []))} region(s) found")
+
+    if args.json:
+        with open(args.json, "w") as fh:
+            json.dump(result, fh, indent=2)
+    else:
+        print(json.dumps(result, indent=2))
+
+    if result.get("error"):
+        print(f"extract failed: {result['error']}", file=sys.stderr)
+        return 1
+    usable = sum(1 for r in result["regions"] if r["usable"])
+    print(f"Found {len(result['regions'])} region(s), {usable} extracted successfully.", file=sys.stderr)
     return 0
 
 
@@ -121,6 +153,14 @@ def main(argv=None) -> int:
     c.add_argument("slices", help="JSON file: [{\"name\": ..., \"value\": ...}, ...]")
     c.add_argument("out", help="output PNG path")
     c.set_defaults(func=_cmd_chart)
+
+    x = sub.add_parser("extract", help="identify + extract a firmware image via moria (FR-ING/FR-EXT)")
+    x.add_argument("target", help="raw firmware image (single file) to identify/extract")
+    x.add_argument("--out", required=True, help="directory to extract into")
+    x.add_argument("--json", help="write result JSON to this path (default: stdout)")
+    x.add_argument("--progress", action="store_true",
+                   help="emit @@IFDA@@<json> progress events on stderr")
+    x.set_defaults(func=_cmd_extract)
 
     t = sub.add_parser("triage", help="set triage state for a finding")
     t.add_argument("store", help="triage state JSON file")

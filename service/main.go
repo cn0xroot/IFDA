@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed web/*
@@ -22,6 +23,10 @@ func main() {
 	core := flag.String("core", "", "directory containing the ifda python package (auto-detected if empty)")
 	workers := flag.Int("workers", 2, "number of concurrent analysis workers")
 	qlen := flag.Int("queue", 128, "max queued jobs")
+	analyzeTimeout := flag.Duration("analyze-timeout", 2*time.Hour,
+		"hard wall-clock cap per analyze subprocess -- a real safety net against a truly hung run, "+
+			"not a target-size estimate, so raise it for unusually large targets (thousands of binaries, "+
+			"e.g. an automotive/infotainment image with embedded Chromium) rather than assuming 30m-2h is universal")
 	dataDir := flag.String("data", "", "dir for triage state + uploads (default: OS temp)")
 	authFlag := flag.Bool("auth", true, "require login (username/password) on /api/*; pass -auth=false to disable (trusted/air-gapped use only)")
 	userFlag := flag.String("user", "", "seed this username's password to -pass if the account doesn't exist yet (does NOT overwrite a password already changed via the web UI — pass -reset-pass to force that)")
@@ -67,9 +72,16 @@ func main() {
 		log.Fatal(err)
 	}
 	triage := NewTriageStore(filepath.Join(dir, "triage.json"))
-	worker := NewWorker(store, coreDir, *workers, *qlen, reportDB, triage)
+	worker := NewWorker(store, coreDir, *workers, *qlen, reportDB, triage, *analyzeTimeout)
 	ghidra := checkGhidra(coreDir)
 	log.Printf("ghidra decompile enrichment available: %v", ghidra)
+	moria := detectMoria(coreDir)
+	if moria == "" {
+		log.Printf("moria firmware extraction: not available (extract jobs will fail; " +
+			"build the bundled submodule with scripts/build-moria.sh, or install moria on PATH)")
+	} else {
+		log.Printf("moria firmware extraction: %s", moria)
+	}
 
 	var authStore *AuthStore
 	if *authFlag {
@@ -119,7 +131,7 @@ func main() {
 	}
 	log.Printf("AI provider secrets key: %s (back this up together with reports.db/users.json -- losing it permanently strands, not exposes, every stored AI provider key)", aiKeyPath)
 
-	api := NewAPI(store, worker, triage, reportDB, filepath.Join(dir, "uploads"), coreDir, ghidra, authStore, aiKey)
+	api := NewAPI(store, worker, triage, reportDB, filepath.Join(dir, "uploads"), coreDir, ghidra, moria, authStore, aiKey)
 
 	mux := http.NewServeMux()
 	api.Routes(mux)
@@ -171,6 +183,25 @@ func findCoreDir() string {
 // checkGhidra probes the core once at startup for whether the Ghidra
 // decompile enrichment (--decompile) will actually do anything, so the
 // frontend can hint accordingly instead of a job silently no-op'ing.
+// detectMoria reports which moria build the extract pipeline will actually
+// run, as its "moria <version>" banner, or "" when there is none. It asks
+// ifda.ingest rather than looking for the binary itself, so the answer always
+// matches the resolution order that ifda/ingest documents (an $IFDA_MORIA
+// override, then the in-tree build of the pinned submodule, then PATH) instead
+// of drifting from it. The version -- not just a yes/no -- is what makes an
+// extract run reproducible: with three possible sources for the binary,
+// "available" alone does not say which one answered.
+func detectMoria(coreDir string) string {
+	cmd := exec.Command("python3", "-c",
+		"from ifda.ingest import moria_version; print(moria_version())")
+	cmd.Dir = coreDir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func checkGhidra(coreDir string) bool {
 	cmd := exec.Command("python3", "-c",
 		"import sys; from ifda.re.decompile import ghidra_available; sys.exit(0 if ghidra_available() else 1)")

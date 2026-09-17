@@ -1181,6 +1181,6 @@ func newTestAPI(t *testing.T) (*API, *Store, *ReportDB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := NewAPI(store, nil, nil, reportDB, filepath.Join(dir, "uploads"), dir, false, nil, aiKey)
+	api := NewAPI(store, nil, nil, reportDB, filepath.Join(dir, "uploads"), dir, false, "", nil, aiKey)
 	return api, store, reportDB
 }

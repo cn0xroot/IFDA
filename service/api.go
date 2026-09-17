@@ -26,6 +26,7 @@ type API struct {
 	uploadDir  string
 	coreDir    string        // repo root containing the ifda package (for static reference data like vuln_db.json)
 	ghidra     bool          // whether the core's Ghidra decompile enrichment is usable
+	moria      string        // "moria <version>" the extract pipeline resolves to, "" if none
 	authStore  *AuthStore    // nil means login is disabled
 	captcha    *CaptchaStore // only meaningful when authStore != nil
 	aiKey      []byte        // local key encrypting AI provider API keys at rest, see aicrypto.go
@@ -63,8 +64,8 @@ func (a *API) endAIRun(jobID string) {
 	delete(a.aiRuns, jobID)
 }
 
-func NewAPI(store *Store, worker *Worker, triage *TriageStore, reportDB *ReportDB, uploadDir, coreDir string, ghidra bool, authStore *AuthStore, aiKey []byte) *API {
-	return &API{store: store, worker: worker, triage: triage, reportDB: reportDB, uploadDir: uploadDir, coreDir: coreDir, ghidra: ghidra,
+func NewAPI(store *Store, worker *Worker, triage *TriageStore, reportDB *ReportDB, uploadDir, coreDir string, ghidra bool, moria string, authStore *AuthStore, aiKey []byte) *API {
+	return &API{store: store, worker: worker, triage: triage, reportDB: reportDB, uploadDir: uploadDir, coreDir: coreDir, ghidra: ghidra, moria: moria,
 		authStore: authStore, captcha: NewCaptchaStore(), aiKey: aiKey, httpClient: newAIHTTPClient(),
 		aiRuns: map[string]bool{}}
 }
@@ -172,7 +173,12 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs/{id}/ai-analysis", a.auth(a.getAIAnalysis))
 	mux.HandleFunc("POST /api/jobs/{id}/ai-analysis", a.auth(a.runAIAnalysis))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "ghidra_available": a.ghidra, "login_required": a.authStore != nil})
+		// moria_version is the banner of the binary the extract pipeline will
+		// actually run ("" when there is none), not a bool: the frontend only
+		// needs truthiness to enable the Extract button, but which build
+		// answered is what makes a reported region set reproducible.
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "ghidra_available": a.ghidra,
+			"moria_version": a.moria, "login_required": a.authStore != nil})
 	})
 }
 
@@ -264,13 +270,17 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 type createReq struct {
+	// Kind selects "analyze" (default, if empty) or "extract" (identify +
+	// unpack a raw firmware image via moria; see ifda/ingest and Job.Kind).
+	Kind      string `json:"kind"`
 	Target    string `json:"target"`
 	Decompile bool   `json:"decompile"`
 	// Force skips the dedup cache (Store.cacheLookup) even for a
 	// byte-identical target already scanned before -- the "re-scan" button
 	// in the web UI sets this, since a plain resubmit of the same target
 	// would otherwise just CopyJob the old cached report verbatim, which is
-	// the opposite of what "re-scan" is asking for.
+	// the opposite of what "re-scan" is asking for. Meaningless for
+	// kind="extract", which never uses the dedup cache at all.
 	Force bool `json:"force"`
 }
 
@@ -285,11 +295,20 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "target is required")
 		return
 	}
+	if req.Kind != "" && req.Kind != "analyze" && req.Kind != "extract" {
+		writeErr(w, http.StatusBadRequest, "kind must be \"analyze\" or \"extract\"")
+		return
+	}
 	if _, err := os.Stat(req.Target); err != nil {
 		writeErr(w, http.StatusBadRequest, "target not found on the server filesystem: "+req.Target)
 		return
 	}
-	job := a.store.Create(req.Target, req.Decompile)
+	var job *Job
+	if req.Kind == "extract" {
+		job = a.store.CreateExtract(req.Target)
+	} else {
+		job = a.store.Create(req.Target, req.Decompile)
+	}
 	a.worker.Submit(job, req.Force)
 	writeJSON(w, http.StatusAccepted, job)
 }

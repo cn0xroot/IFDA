@@ -1,0 +1,3 @@
+[submodule "moria"]
+	path = moria
+	url = https://github.com/nmatt0/moria
