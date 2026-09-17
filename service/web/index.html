@@ -16,55 +16,123 @@
      shared; per-theme blocks override the surface/accent palette + --code. */
   :root { --crit:#ef4444; --high:#f97316; --med:#eab308; --low:#22c55e; --info:#38bdf8;
           --ok:#22c55e; --bad:#ef4444; --warn:#eab308; --login-bg-tint:55%; }
+  /* --muted carries body-size text (meta rows, log timestamps, captions, table
+     headers), so every theme's value is picked to clear 4.5:1 against that
+     theme's --panel. The old, dimmer value moves to --dim, which is only ever
+     used for hairlines, separators and decorative glyphs -- never for text.
+     --fg2 is the secondary text step between --fg and --muted. */
   :root, [data-theme="midnight"] {
     --bg:#07080f; --surface:#0d1117; --panel:#111827; --panel2:#161f2e;
-    --line:#1e2a3a; --line2:#243044; --fg:#f1f5f9; --muted:#64748b; --soft:#94a3b8;
+    --line:#1e2a3a; --line2:#243044; --fg:#f1f5f9; --fg2:#dbe4ef;
+    --muted:#7c8da5; --dim:#64748b; --soft:#a7b6c9;
     --accent:#6366f1; --accent-h:#818cf8; --accent2:#a78bfa; --code:#0b0f15; }
   [data-theme="ocean"] {
     --bg:#060d14; --surface:#0a1622; --panel:#0f1f30; --panel2:#16293d;
-    --line:#1c3147; --line2:#244056; --fg:#e6f1f7; --muted:#5b7488; --soft:#93b4c8;
+    --line:#1c3147; --line2:#244056; --fg:#e6f1f7; --fg2:#cfe2ee;
+    --muted:#768fa3; --dim:#5b7488; --soft:#a8c5d6;
     --accent:#0ea5e9; --accent-h:#38bdf8; --accent2:#22d3ee; --code:#06101a; }
   [data-theme="forest"] {
     --bg:#060f0a; --surface:#0b1810; --panel:#102217; --panel2:#16301f;
-    --line:#1d3a28; --line2:#265034; --fg:#ecf6ef; --muted:#5f7d68; --soft:#9bbfa3;
+    --line:#1d3a28; --line2:#265034; --fg:#ecf6ef; --fg2:#d4e8da;
+    --muted:#75927e; --dim:#5f7d68; --soft:#a9caaf;
     --accent:#22c55e; --accent-h:#4ade80; --accent2:#84cc16; --code:#08130d; }
   [data-theme="dusk"] {
     --bg:#0f0a16; --surface:#160f20; --panel:#1d142b; --panel2:#271a39;
-    --line:#322247; --line2:#412e5c; --fg:#f2ecf7; --muted:#76688a; --soft:#b3a5c8;
+    --line:#322247; --line2:#412e5c; --fg:#f2ecf7; --fg2:#ded3ea;
+    --muted:#8b7e9f; --dim:#76688a; --soft:#bdb0d0;
     --accent:#a855f7; --accent-h:#c084fc; --accent2:#f59e0b; --code:#0c0814; }
   [data-theme="rose"] {
     --bg:#14070d; --surface:#1d0c14; --panel:#27121c; --panel2:#341925;
-    --line:#42232f; --line2:#552e3e; --fg:#f7eef1; --muted:#8a6670; --soft:#c8a3ad;
+    --line:#42232f; --line2:#552e3e; --fg:#f7eef1; --fg2:#ecd9df;
+    --muted:#9d7b86; --dim:#8a6670; --soft:#d0aeb7;
     --accent:#f43f5e; --accent-h:#fb7185; --accent2:#fb923c; --code:#11060b; }
   [data-theme="nord"] {
     --bg:#2e3440; --surface:#333b48; --panel:#3b4252; --panel2:#434c5e;
-    --line:#4c566a; --line2:#5a657c; --fg:#eceff4; --muted:#7b88a1; --soft:#d8dee9;
+    --line:#4c566a; --line2:#5a657c; --fg:#eceff4; --fg2:#dfe4ec;
+    --muted:#a9b4c8; --dim:#7b88a1; --soft:#d8dee9;
     --accent:#88c0d0; --accent-h:#8fbcbb; --accent2:#81a1c1; --code:#272c36; }
   [data-theme="light"] {
     --bg:#f8fafc; --surface:#ffffff; --panel:#ffffff; --panel2:#f1f5f9;
-    --line:#e2e8f0; --line2:#cbd5e1; --fg:#0f172a; --muted:#64748b; --soft:#475569;
+    --line:#e2e8f0; --line2:#cbd5e1; --fg:#0f172a; --fg2:#1e293b;
+    --muted:#64748b; --dim:#94a3b8; --soft:#475569;
     --accent:#6366f1; --accent-h:#4f46e5; --accent2:#a855f7; --code:#f1f5f9;
     --login-bg-tint:85%; }
+  /* Spacing and radius ladder: 4 / 7 / 10 / 14 / 20 / 28, radii 4 / 6 / 8 / 11.
+     Control heights: 36 primary, 32 secondary, 26 inline, 22 chip. */
+  :root { --s1:4px; --s2:7px; --s3:10px; --s4:14px; --s5:20px; --s6:28px;
+          --r1:4px; --r2:6px; --r3:8px; --r4:11px;
+          --h-pri:36px; --h-sec:32px; --h-inl:26px; --h-chip:22px;
+          --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-  a { color:var(--accent); text-decoration:none; }
-  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex;
-           align-items:center; gap:12px; }
-  header h1 { font-size:16px; margin:0; font-weight:700; letter-spacing:.02em;
-              background:linear-gradient(90deg,var(--accent),var(--accent2));
-              -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
-  header .tag { color:var(--muted); font-size:12px; }
+         font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI","Helvetica Neue",sans-serif;
+         -webkit-font-smoothing:antialiased; }
+  a { color:var(--accent-h); text-decoration:none; }
+  .num { font-variant-numeric:tabular-nums; }
+  .mono { font-family:var(--mono); }
+
+  /* ---- header: one fixed 56px bar ----
+     The old header stacked a wordmark, a four-word tagline, a summary string,
+     a flex:1 actor input and six buttons in a wrapping row, which squeezed the
+     tagline into four lines at 1600px. The tagline is login-page copy and is
+     gone from here; what replaces it is the thing the analyst actually needs
+     pinned: which image this report is about. Everything set once per session
+     (display name, theme, language) moved into the user menu. */
+  header { height:56px; flex:none; box-sizing:border-box; padding:0 18px;
+           background:var(--surface); border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:14px; }
+  header .brand { display:flex; align-items:center; gap:9px; flex:none; }
+  header .brand svg { width:20px; height:20px; stroke:var(--accent-h); fill:none;
+           stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  header h1 { font-size:15px; margin:0; font-weight:700; letter-spacing:.09em; color:var(--fg); }
+  header .vrule { flex:none; width:1px; height:22px; background:var(--line); }
+  header .scanctx { display:flex; align-items:center; gap:8px; min-width:0; }
+  header .scanctx .name { font-family:var(--mono); font-size:13px; font-weight:500;
+           color:var(--fg); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
   header .spacer { flex:1; }
-  select.themesel, select.langsel { width:auto; padding:5px 8px; font-size:12px; cursor:pointer; }
-  input.actorbox { width:120px; padding:5px 8px; font-size:12px; }
+  header .tag { color:var(--muted); font-size:12px; }
+
+  .hchip { display:inline-flex; align-items:center; height:var(--h-chip); padding:0 8px;
+           border-radius:5px; background:var(--panel2); border:1px solid var(--line);
+           color:var(--soft); font-size:11px; font-weight:500; white-space:nowrap; }
+
+  /* segmented tool group: four equal-weight ghost buttons become one object */
+  .segnav { flex:none; display:flex; align-items:stretch; height:var(--h-sec);
+            border:1px solid var(--line); border-radius:var(--r3);
+            background:var(--panel); overflow:hidden; }
+  .segnav button { display:flex; align-items:center; gap:7px; height:100%; padding:0 12px;
+            background:none; border:0; border-right:1px solid var(--line); border-radius:0;
+            color:var(--soft); font-size:12.5px; font-weight:500; cursor:pointer; }
+  .segnav button:last-child { border-right:0; }
+  .segnav button:hover { background:var(--panel2); color:var(--fg); }
+  .segnav button.active { background:var(--line); color:var(--fg); font-weight:600; }
+  .segnav button svg { width:14px; height:14px; flex:none; fill:none; stroke:currentColor;
+            stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .segnav .cnt { color:var(--muted); font-weight:500; font-variant-numeric:tabular-nums; }
+  .segnav button.active .cnt { color:var(--soft); }
+
+  select.themesel { width:auto; padding:5px 8px; font-size:12px; cursor:pointer; }
+
+  /* Language switch: a two-segment toggle rather than a <select>.
+     There are exactly two languages, so a dropdown hid the alternative behind
+     a click and never showed which one was active without opening it. Both
+     options are visible, the active one is marked, and switching is one click.
+     The theme picker stays a <select> -- seven options do not fit this shape. */
+  .langtog { display:flex; align-items:stretch; height:var(--h-sec); flex:none;
+        border:1px solid var(--line2); border-radius:var(--r3); overflow:hidden; }
+  .langtog button { flex:1; padding:0 12px; background:var(--panel); border:0;
+        border-right:1px solid var(--line2); border-radius:0; color:var(--muted);
+        font-size:12.5px; font-weight:500; white-space:nowrap; cursor:pointer; }
+  .langtog button:last-child { border-right:0; }
+  .langtog button:hover { background:var(--panel2); color:var(--fg); }
+  .langtog button.on { background:var(--line); color:var(--fg); font-weight:600; }
   button.ghost.active { border-color:var(--accent); color:var(--accent); }
 
   .usermenu { position:relative; }
   .usermenu-btn { display:flex; align-items:center; gap:6px; }
   .usermenu-btn .usericon { font-size:12px; line-height:1; }
   .usermenu-btn .caret { font-size:9px; color:var(--muted); }
-  .usermenu-dropdown { position:absolute; top:calc(100% + 8px); right:0; z-index:50; width:200px;
+  .usermenu-dropdown { position:absolute; top:calc(100% + 8px); right:0; z-index:50; width:248px;
         background:color-mix(in srgb, var(--panel) 96%, transparent); backdrop-filter:blur(16px);
         border:1px solid var(--line); border-radius:12px; padding:8px;
         box-shadow:0 16px 40px -12px rgba(0,0,0,.45); display:flex; flex-direction:column; gap:2px; }
@@ -74,41 +142,76 @@
   .usermenu-dropdown button { background:none; border:0; color:var(--fg); text-align:left;
         padding:8px 9px; border-radius:7px; font-size:13px; font-weight:500; }
   .usermenu-dropdown button:hover { background:var(--panel2); }
-  main { display:grid; grid-template-columns:380px 1fr; height:calc(100vh - 50px); }
-  .left { border-right:1px solid var(--line); overflow-y:auto; padding:14px; }
-  .right { overflow-y:auto; padding:18px 22px; }
+  /* Settings that are chosen once per session live here rather than eating
+     header width: display name for the triage log, theme and language. */
+  .usermenu-field { display:flex; flex-direction:column; gap:4px; padding:7px 9px 9px; }
+  .usermenu-field > label, .usermenu-field > .fl { font-size:11px; color:var(--muted); }
+  .usermenu-sep { height:1px; margin:5px 9px; background:var(--line); }
+  .usermenu-avatar { display:flex; align-items:center; justify-content:center; width:22px; height:22px;
+        border-radius:var(--r2); background:var(--line); font-size:11px; font-weight:600;
+        color:var(--accent-h); text-transform:uppercase; }
+
+  main { display:grid; grid-template-columns:340px 1fr; height:calc(100vh - 56px); }
+  .left { border-right:1px solid var(--line); overflow-y:auto; background:var(--bg); }
+  .right { overflow-y:auto; display:flex; flex-direction:column; }
 
   input, select, button { font:inherit; }
   input[type=text], input[type=number], input[type=password], select { background:var(--panel); border:1px solid var(--line);
         color:var(--fg); padding:7px 9px; border-radius:6px; font-size:13px; width:100%; }
-  .submit { display:flex; gap:6px; margin-bottom:8px; }
-  .submit input { flex:1; }
+  /* left rail: a fixed submit head, then a scrolling scan list */
+  .railhead { padding:var(--s4) var(--s4) 12px; border-bottom:1px solid var(--line);
+              display:flex; flex-direction:column; gap:9px; }
+  .railopts { display:flex; align-items:center; gap:var(--s3); }
+  .railopts label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--soft); cursor:pointer; }
+  .railopts label input[type=checkbox] { width:14px; height:14px; margin:0; accent-color:var(--accent); flex:none; }
+  .railopts .spacer { flex:1; }
+  .iconbtn { display:flex; align-items:center; justify-content:center; width:30px; height:30px;
+             padding:0; background:var(--panel2); border:1px solid var(--line2);
+             border-radius:var(--r2); color:var(--soft); cursor:pointer; }
+  .iconbtn:hover { background:var(--panel2); border-color:var(--accent); color:var(--fg); }
+  .iconbtn svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2;
+             stroke-linecap:round; stroke-linejoin:round; }
+  .railsec { display:flex; align-items:center; gap:8px; padding:9px var(--s4);
+             border-bottom:1px solid var(--line); }
+  .railsec .hd { font-size:10.5px; font-weight:600; letter-spacing:.09em;
+             text-transform:uppercase; color:var(--muted); }
+  .raillist { padding:var(--s3) 12px; display:flex; flex-direction:column; gap:var(--s2); }
+
+  .submit { display:flex; gap:6px; }
+  .submit input { flex:1; min-width:0; font-family:var(--mono); font-size:12.5px; }
   button { background:var(--accent); border:0; color:#fff; padding:7px 13px; border-radius:6px;
            cursor:pointer; font-size:13px; font-weight:600; white-space:nowrap; }
   button:hover { background:var(--accent-h); }
   button.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--fg); }
   button.ghost:hover { border-color:var(--accent); }
   button.sm { padding:3px 8px; font-size:11px; }
-  .uprow { display:flex; gap:6px; align-items:center; margin-bottom:14px; font-size:12px;
-           color:var(--muted); }
-  .uprow label { cursor:pointer; color:var(--accent); }
-  .uprow input[type=file] { display:none; }
-
-  .batchbar { display:flex; align-items:center; gap:10px; margin-bottom:9px; font-size:12px; color:var(--muted); }
-  .batchbar .chk { display:flex; align-items:center; gap:5px; cursor:pointer; }
-  .batchbar .chk input { width:auto; }
-  .job { background:var(--panel); border:1px solid var(--line); border-radius:10px;
-         padding:11px 13px; margin-bottom:8px; cursor:pointer; transition:border-color .15s; }
+  /* Job card. Everything inside is single-line and clips: before this the
+     running-job `detail` string (a full path to the file being scanned) had no
+     width constraint inside a wrapping .meta row, so it painted straight across
+     the rail divider and over the report pane. */
+  .job { background:var(--panel); border:1px solid var(--line); border-radius:var(--r4);
+         padding:var(--s3) 11px; cursor:pointer; transition:border-color .15s;
+         display:flex; flex-direction:column; gap:var(--s2); overflow:hidden; }
   .job:hover { border-color:var(--line2); }
   .job.sel { border-color:var(--accent); background:var(--panel2); }
-  .job .row1 { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .job .row1 { display:flex; align-items:center; gap:8px; min-width:0; }
+  .job .dot { flex:none; width:6px; height:6px; border-radius:50%; background:var(--dim); }
+  .job .dot.running { background:var(--accent); }
+  .job .dot.completed { background:var(--ok); }
+  .job .dot.failed { background:var(--bad); }
+  .job .dot.paused { background:var(--warn); }
   .job .targetwrap { min-width:0; flex:1; }
-  .job .target-name { font-family:ui-monospace,Menlo,monospace; font-size:12.5px; font-weight:600;
+  .job .target-name { font-family:var(--mono); font-size:12.5px; font-weight:500;
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .job .target-dir { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--muted);
-        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
-  .jobid { font-family:ui-monospace,Menlo,monospace; font-size:10px; color:var(--muted);
-           white-space:nowrap; flex:none; align-self:flex-start; margin-top:2px; }
+  /* rtl + left alignment keeps the tail of a long path visible, which is the
+     part that identifies it, and still clips to one line */
+  .job .target-dir { font-family:var(--mono); font-size:10.5px; color:var(--muted);
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        direction:rtl; text-align:left; }
+  .job .detail { font-size:11px; color:var(--soft); min-width:0; flex:1;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .jobid { font-family:var(--mono); font-size:10.5px; color:var(--muted);
+           white-space:nowrap; flex:none; }
   .badge { font-size:10px; padding:1px 7px; border-radius:10px; text-transform:uppercase;
            letter-spacing:.04em; font-weight:700; }
   .badge.queued{background:var(--line2);color:var(--soft)} .badge.running{background:var(--accent);color:#fff}
@@ -130,7 +233,7 @@
      to compute an honest percentage from, so this is a sliding animation
      rather than a numeric progress bar). */
   .bar.indeterminate > span { width:30%; transition:none; animation:barSlide 1.1s ease-in-out infinite; }
-  .bar.sub { height:3px; } .bar.sub > span { background:var(--muted); }
+  .bar.sub { height:3px; } .bar.sub > span { background:var(--dim); }
   @keyframes barSlide { 0% { margin-left:-30%; } 100% { margin-left:100%; } }
   .meta { color:var(--muted); font-size:11px; margin-top:5px; display:flex; gap:9px; flex-wrap:wrap; align-items:center; }
   .meta .time-ago { margin-left:auto; white-space:nowrap; }
@@ -140,20 +243,57 @@
   .bg-crit{background:var(--crit)} .bg-high{background:var(--high)} .bg-med{background:var(--med)}
   .bg-low{background:var(--low)} .bg-info{background:var(--info)}
 
-  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:16px; }
-  .tabs button { background:none; color:var(--muted); border:0; border-bottom:2px solid transparent;
-        border-radius:0; padding:8px 14px; font-weight:600; }
-  .tabs button.active { color:var(--fg); border-bottom-color:var(--accent); }
+  /* ---- tabs ----
+     Eleven top-level tabs did not fit at 1600px: Services was clipped and AI
+     analysis was off-screen entirely. Five primary tabs stay; the six inventory
+     views and the two string views move to a second-level segmented control
+     that only appears under the tab that owns them. */
+  .tabs { flex:none; display:flex; align-items:center; gap:2px; height:44px; padding:0 var(--s5);
+          border-bottom:1px solid var(--line); background:var(--surface);
+          position:sticky; top:0; z-index:20; }
+  .tabs button { display:flex; align-items:center; gap:7px; height:100%; padding:0 12px;
+        background:none; color:var(--soft); border:0; border-bottom:2px solid transparent;
+        border-radius:0; font-size:13px; font-weight:500; }
+  .tabs button:hover { background:none; color:var(--fg); }
+  .tabs button.active { color:var(--fg); font-weight:600; border-bottom-color:var(--accent); }
+  .tabs button .cnt { color:var(--muted); font-weight:500; font-variant-numeric:tabular-nums; }
+  .tabs button.active .cnt { color:var(--soft); }
   .tabs .spacer { flex:1; }
   .tabs .exp { display:flex; gap:6px; align-items:center; }
 
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;
-           margin-bottom:18px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .subnav { flex:none; display:flex; align-items:center; gap:var(--s3); padding:0 var(--s5);
+            height:48px; border-bottom:1px solid var(--line); background:var(--surface); }
+  .pane { flex:1; min-height:0; padding:18px var(--s5) var(--s5); }
+
+  /* ---- dashboard ----
+     Five equal 26px-number cards gave a total, two severities, a binary count
+     and a CVE count all the same weight. The severity split is the primary
+     read, so it gets one wide card and a proportional bar; the rest drop to a
+     three-quarter-scale tile row. */
+  .riskcard { background:var(--panel); border:1px solid var(--line); border-radius:var(--r4);
+        padding:16px 18px 15px; margin-bottom:var(--s4); display:flex; flex-direction:column; gap:13px; }
+  .riskcard .top { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .riskcard .total { font-size:30px; font-weight:700; line-height:1; letter-spacing:-.015em;
+        font-variant-numeric:tabular-nums; }
+  .riskcard .sub { font-size:13px; color:var(--soft); }
+  .riskcard .spacer { flex:1; }
+  .sevbar { display:flex; height:10px; border-radius:5px; overflow:hidden; background:var(--line); }
+  .sevbar > span { display:block; min-width:0; }
+  .sevkeys { display:flex; align-items:center; gap:22px; flex-wrap:wrap; }
+  .sevkey { display:flex; align-items:center; gap:8px; padding:0; background:none; border:0;
+        color:inherit; cursor:pointer; font-weight:400; }
+  .sevkey .sw { width:9px; height:9px; border-radius:2px; flex:none; }
+  .sevkey .lb { font-size:12.5px; color:var(--fg2); }
+  .sevkey .vl { font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:var(--s3);
+           margin-bottom:var(--s4); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r3);
+          padding:11px 13px; display:flex; flex-direction:column; gap:2px; text-align:left; }
   .card.clickable { cursor:pointer; } .card.clickable:hover { border-color:var(--accent); }
-  .card .n { font-size:26px; font-weight:700; line-height:1.1; }
-  .card .l { color:var(--muted); font-size:12px; margin-top:2px; }
-  .fwmeta { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
+  .card .n { font-size:19px; font-weight:600; line-height:1.2; font-variant-numeric:tabular-nums; }
+  .card .l { color:var(--soft); font-size:11.5px; }
+  .fwmeta { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:var(--s4); }
 
   .distro { background:var(--panel); border:1px solid var(--line); border-radius:8px;
             padding:14px 16px; margin-bottom:18px; }
@@ -188,8 +328,8 @@
      Purely visual (aria-hidden) -- the real progress data is the bars and
      the arch chart above/below it, this just gives the eye something alive
      to look at during a scan. */
-  .scanIllustration { display:block; width:100%; max-width:565px; height:90px; margin:14px auto 4px; color:var(--muted); }
-  .hw-icon { color:var(--muted); }
+  .scanIllustration { display:block; width:100%; max-width:565px; height:90px; margin:14px auto 4px; color:var(--dim); }
+  .hw-icon { color:var(--dim); }
   .scanLens { transform:translate(30px,45px); animation:lensSweep 4.5s ease-in-out infinite alternate; }
   @keyframes lensSweep {
     0%   { transform:translate(30px,45px); }
@@ -204,24 +344,73 @@
   .pager { display:flex; gap:10px; align-items:center; justify-content:center; margin-top:14px; }
   .pager-jump { display:flex; gap:6px; align-items:center; margin-left:8px; }
   .pager-jump input[type=number] { width:64px; text-align:center; padding:5px 6px; }
-  .filters .sevtog { display:flex; gap:4px; }
-  .filters .sevtog button { padding:3px 9px; font-size:11px; border-radius:12px;
-        background:var(--panel2); border:1px solid var(--line); color:var(--muted); font-weight:700; }
-  .filters .sevtog button.on { color:#fff; }
+  /* Severity toggles were five single-letter circles (C H M L I) with no
+     label and no count. They are now named pills that also carry the count
+     for that severity, so the filter row doubles as the severity summary. */
+  .filters .sevtog { display:flex; align-items:stretch; height:var(--h-sec);
+        border:1px solid var(--line2); border-radius:var(--r3); overflow:hidden; }
+  .filters .sevtog button { display:flex; align-items:center; gap:6px; padding:0 10px;
+        font-size:12px; border-radius:0; background:var(--panel); border:0;
+        border-right:1px solid var(--line2); color:var(--muted); font-weight:600; }
+  .filters .sevtog button:last-child { border-right:0; }
+  .filters .sevtog button .sw { width:7px; height:7px; border-radius:2px; background:var(--line2); flex:none; }
+  .filters .sevtog button .cnt { font-variant-numeric:tabular-nums; font-weight:600; }
+  .filters .sevtog button.on.crit { background:rgba(239,68,68,.16); color:#fca5a5; }
+  .filters .sevtog button.on.high { background:rgba(249,115,22,.16); color:#fdba74; }
+  .filters .sevtog button.on.med  { background:rgba(234,179,8,.16); color:#fde047; }
+  .filters .sevtog button.on.low  { background:rgba(34,197,94,.16); color:#86efac; }
+  .filters .sevtog button.on.info { background:rgba(56,189,248,.16); color:#7dd3fc; }
+  .filters .sevtog button.on.crit .sw { background:var(--crit); }
+  .filters .sevtog button.on.high .sw { background:var(--high); }
+  .filters .sevtog button.on.med  .sw { background:var(--med); }
+  .filters .sevtog button.on.low  .sw { background:var(--low); }
+  .filters .sevtog button.on.info .sw { background:var(--info); }
   .filters select { width:auto; min-width:120px; }
   .filters input[type=text] { width:180px; }
   .filters .rng { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
   .filters .count { margin-left:auto; color:var(--muted); font-size:12px; }
 
-  .finding { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--line);
-        border-radius:7px; margin-bottom:9px; }
-  .finding.crit{border-left-color:var(--crit)} .finding.high{border-left-color:var(--high)}
-  .finding.med{border-left-color:var(--med)} .finding.low{border-left-color:var(--low)}
-  .finding.info{border-left-color:var(--info)}
-  .finding .hd { display:flex; align-items:center; gap:10px; padding:10px 13px; cursor:pointer; }
-  .finding .hd .t { font-weight:600; flex:1; }
-  .finding .hd .sevtag { font-size:10px; font-weight:700; text-transform:uppercase; padding:1px 7px;
-        border-radius:4px; color:#0d1117; }
+  /* ---- findings ----
+     A flat list gave one 66px card per finding, so a run of fourteen
+     consecutive tcpdump CVEs filled the whole viewport with near-identical
+     rows. Findings on the page are grouped by component: the group header
+     carries the count and the severity split, and rows inside it are a single
+     38px line. The card body is unchanged, it just opens from a denser row. */
+  .flist { border:1px solid var(--line); border-radius:var(--r3); overflow:hidden; background:var(--panel); }
+  .flist > div:first-child .fgrouphd { border-top:0; }
+  .fgrouphd { display:flex; align-items:center; gap:11px; width:100%; box-sizing:border-box;
+        height:44px; padding:0 13px; background:var(--panel2); border:0; border-top:1px solid var(--line2);
+        border-radius:0; color:var(--fg); text-align:left; font-weight:400; cursor:pointer; }
+  .fgrouphd:hover { background:var(--line); }
+  .fgrouphd .car { flex:none; width:11px; color:var(--soft); font-size:10px; }
+  .fgrouphd .nm { font-family:var(--mono); font-size:13px; font-weight:600; }
+  .fgrouphd .ver { font-family:var(--mono); font-size:12px; color:var(--soft); }
+  .fgrouphd .spacer { flex:1; }
+  .fgrouphd .pth { font-family:var(--mono); font-size:11.5px; color:var(--muted);
+        max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
+  .sevpip { display:inline-flex; align-items:center; justify-content:center; min-width:22px;
+        height:20px; padding:0 5px; border-radius:var(--r1); font-size:11px; font-weight:600;
+        font-variant-numeric:tabular-nums; }
+  .sevpip.crit{background:rgba(239,68,68,.18);color:#fca5a5}
+  .sevpip.high{background:rgba(249,115,22,.18);color:#fdba74}
+  .sevpip.med{background:rgba(234,179,8,.18);color:#fde047}
+  .sevpip.low{background:rgba(34,197,94,.16);color:#86efac}
+  .sevpip.info{background:rgba(56,189,248,.16);color:#7dd3fc}
+
+  .finding { background:var(--panel); border-top:1px solid var(--line); }
+  .fgroup .finding:first-of-type { border-top:0; }
+  .finding.flat { border:1px solid var(--line); border-left:3px solid var(--line);
+        border-radius:var(--r2); margin-bottom:6px; }
+  .finding.flat.crit{border-left-color:var(--crit)} .finding.flat.high{border-left-color:var(--high)}
+  .finding.flat.med{border-left-color:var(--med)} .finding.flat.low{border-left-color:var(--low)}
+  .finding.flat.info{border-left-color:var(--info)}
+  .finding .hd { display:flex; align-items:center; gap:10px; min-height:38px; padding:0 13px; cursor:pointer; }
+  .finding.flat .hd { padding:8px 13px; }
+  .finding .hd:hover { background:var(--panel2); }
+  .finding .hd .t { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .finding .hd .sevtag { flex:none; font-size:10px; font-weight:700; text-transform:uppercase;
+        letter-spacing:.05em; padding:2px 6px; border-radius:var(--r1); color:#0d1117; }
+  .finding .hd .cvelist { flex:none; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .finding .body { padding:0 13px 12px; border-top:1px solid var(--line); }
   .finding .sub { color:var(--muted); font-size:12px; margin:8px 0; }
   .finding .desc { font-size:13px; margin:8px 0; }
@@ -254,9 +443,42 @@
 
   table.bins { width:100%; border-collapse:collapse; font-size:13px; }
   table.bins th, table.bins td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
-  table.bins th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
-  table.bins td.path { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  table.bins th { color:var(--muted); font-size:10.5px; font-weight:600; text-transform:uppercase;
+        letter-spacing:.09em; white-space:nowrap; }
+  table.bins td.path { font-family:var(--mono); font-size:12px; }
   table.bins td.preview-cell { background:var(--panel2); padding:12px 14px; }
+  table.bins td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  /* One row, one height. The mitigation column used to wrap six variable-width
+     chips onto three lines and the CVE column dumped every id inline, so a
+     single busybox row ran past 200px tall and the columns stopped lining up. */
+  table.bins tbody tr { height:46px; }
+  table.bins td.cell1 { white-space:nowrap; }
+  table.bins td.clip { max-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* The directory prefix is shared by almost every row, so it is the part
+     that gets truncated -- from the left, so the tail stays readable -- while
+     the file name, which is what identifies the row, is never cut. */
+  table.bins td.dirpath { font-family:var(--mono); font-size:12.5px; max-width:0; }
+  table.bins td.dirpath .pwrap { display:flex; align-items:baseline; min-width:0; }
+  table.bins td.dirpath .dir { color:var(--muted); flex:1 1 auto; min-width:0;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        direction:rtl; text-align:left; }
+  table.bins td.dirpath .base { flex:none; white-space:nowrap; }
+  /* full md5, never truncated: it is the value people copy out of this table */
+  table.bins td.md5 { font-family:var(--mono); font-size:11.5px; color:var(--muted);
+        white-space:nowrap; user-select:all; }
+
+  /* six fixed hardening slots, always in the same order and the same place */
+  .hard { display:flex; gap:3px; }
+  .hard span { display:flex; align-items:center; justify-content:center; width:32px; height:var(--h-chip);
+        border-radius:var(--r1); font-family:var(--mono); font-size:10.5px; font-weight:600; flex:none; }
+  .hard .on   { background:rgba(34,197,94,.18); color:#86efac; }
+  .hard .part { background:rgba(234,179,8,.2);  color:#fde047; }
+  .hard .off  { background:rgba(239,68,68,.2);  color:#fca5a5; }
+  .hard .na   { background:var(--panel2); color:var(--muted); }
+  .hardlegend { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:0 0 10px;
+        font-size:11.5px; color:var(--soft); }
+  .hardlegend .k { font-family:var(--mono); color:var(--fg2); }
+  .hardlegend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; vertical-align:-1px; margin-right:5px; }
   .chip { display:inline-block; font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px;
           margin:1px 2px; }
   .chip.clickable { cursor:pointer; } .chip.clickable:hover { outline:1px solid var(--accent); }
@@ -430,10 +652,12 @@
       <option value="nord">❄️ Nord</option>
       <option value="light">☀️ 浅色 Light</option>
     </select>
-    <select class="langsel" x-model="lang" @change="applyLang()" title="Language / 语言">
-      <option value="en">EN English</option>
-      <option value="zh">中文 Chinese</option>
-    </select>
+    <div class="langtog" role="group" aria-label="Language / 语言">
+      <button type="button" :class="{on: lang==='en'}" :aria-pressed="lang==='en'"
+              @click="lang='en'; applyLang()">EN English</button>
+      <button type="button" :class="{on: lang==='zh'}" :aria-pressed="lang==='zh'"
+              @click="lang='zh'; applyLang()">中文 Chinese</button>
+    </div>
   </div>
   <form class="loginCard" @submit.prevent="doLogin()">
     <div class="loginMark">
@@ -540,98 +764,158 @@
   </div>
 </div>
 <header>
-  <h1>IFDA</h1>
-  <span class="tag" x-text="t('tagline')"></span>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2 4 5.5v6c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-6L12 2Z"/>
+      <path d="M9.5 12.2 11.3 14l3.4-4"/>
+    </svg>
+    <h1>IFDA</h1>
+  </div>
+  <div class="vrule" x-show="selJob"></div>
+  <div class="scanctx" x-show="selJob">
+    <span class="name" :title="selJob ? selJob.target : ''" x-text="selJob ? targetName(selJob.target) : ''"></span>
+    <template x-for="c in headerFacts()" :key="c"><span class="hchip" x-text="c"></span></template>
+  </div>
   <span class="spacer"></span>
-  <span class="tag" x-show="summary" x-text="summaryText()"></span>
-  <input type="text" class="actorbox" x-model="actor" @change="localStorage.setItem('ifda-actor', actor)"
-         :placeholder="t('actor_placeholder')" :title="t('actor_hint')">
-  <button class="ghost sm" :class="{active: compareMode}" @click="toggleCompare()" x-text="t('btn_compare')"></button>
-  <button class="ghost sm" :class="{active: showVulnDB}" @click="toggleVulnDB()" x-text="t('btn_vulndb')"></button>
-  <button class="ghost sm" :class="{active: showSensitiveDict}" @click="toggleSensitiveDict()" x-text="t('btn_sensitive_dict')"></button>
-  <button class="ghost sm" :class="{active: showAISettings}" @click="openAISettings()" x-text="t('btn_ai_settings')"></button>
-  <div class="usermenu" x-show="loginRequired && authToken" x-data="{}" @click.outside="showUserMenu=false">
+  <nav class="segnav">
+    <button :class="{active: compareMode}" @click="toggleCompare()" :title="t('btn_compare')">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v18"/><path d="M16 3v18"/><path d="M3 8h5"/><path d="M16 8h5"/><path d="M3 16h5"/><path d="M16 16h5"/></svg>
+      <span x-text="t('btn_compare')"></span>
+    </button>
+    <button :class="{active: showVulnDB}" @click="toggleVulnDB()" :title="t('btn_vulndb')">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+      <span x-text="t('btn_vulndb')"></span>
+    </button>
+    <button :class="{active: showSensitiveDict}" @click="toggleSensitiveDict()" :title="t('btn_sensitive_dict')">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5Z"/><path d="M8 7h8"/><path d="M8 11h5"/></svg>
+      <span x-text="t('btn_sensitive_dict')"></span>
+    </button>
+    <button :class="{active: showAISettings}" @click="openAISettings()" :title="t('btn_ai_settings')">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg>
+      <span x-text="t('btn_ai_settings')"></span>
+    </button>
+  </nav>
+  <div class="vrule"></div>
+  <div class="usermenu" x-data="{}" @click.outside="showUserMenu=false">
     <button class="ghost sm usermenu-btn" :class="{active: showUserMenu}" @click="showUserMenu=!showUserMenu">
-      <span class="usericon">👤</span><span x-text="username||t('user_center')"></span>
+      <span class="usermenu-avatar" x-show="username||actor" x-text="(username||actor).slice(0,2)"></span>
+      <span x-text="username||actor||t('user_center')"></span>
       <span class="caret" x-text="showUserMenu?'▴':'▾'"></span>
     </button>
     <div class="usermenu-dropdown" x-show="showUserMenu" style="display:none" x-transition>
-      <div class="usermenu-hdr">
+      <div class="usermenu-hdr" x-show="loginRequired && authToken">
         <span x-text="t('signed_in_as')"></span>
         <strong x-text="username||'—'"></strong>
       </div>
-      <button type="button" @click="showUserMenu=false; openChangePassword()" x-text="t('btn_change_password')"></button>
-      <button type="button" @click="showUserMenu=false; doLogout()" x-text="t('btn_logout')"></button>
+      <!-- These three are set once and then left alone, so they live here
+           instead of taking up header width on every screen. -->
+      <div class="usermenu-field">
+        <label for="actorbox" x-text="t('actor_label')"></label>
+        <input id="actorbox" type="text" x-model="actor" @change="localStorage.setItem('ifda-actor', actor)"
+               :placeholder="t('actor_placeholder')" :title="t('actor_hint')">
+      </div>
+      <div class="usermenu-field">
+        <span class="fl" x-text="t('language_label')"></span>
+        <div class="langtog" role="group" :aria-label="t('language_label')">
+          <button type="button" :class="{on: lang==='en'}" :aria-pressed="lang==='en'"
+                  @click="lang='en'; applyLang()">EN English</button>
+          <button type="button" :class="{on: lang==='zh'}" :aria-pressed="lang==='zh'"
+                  @click="lang='zh'; applyLang()">中文 Chinese</button>
+        </div>
+      </div>
+      <div class="usermenu-field">
+        <label for="themesel" x-text="t('theme_label')"></label>
+        <select id="themesel" class="themesel" style="width:100%" x-model="theme" @change="applyTheme()">
+          <option value="midnight">🌙 暗夜 Midnight</option>
+          <option value="ocean">🌊 海洋 Ocean</option>
+          <option value="forest">🌲 森林 Forest</option>
+          <option value="dusk">🌆 暮色 Dusk</option>
+          <option value="rose">🌹 玫瑰 Rose</option>
+          <option value="nord">❄️ Nord</option>
+          <option value="light">☀️ 浅色 Light</option>
+        </select>
+      </div>
+      <template x-if="loginRequired && authToken">
+        <div>
+          <div class="usermenu-sep"></div>
+          <button type="button" style="width:100%" @click="showUserMenu=false; openChangePassword()" x-text="t('btn_change_password')"></button>
+          <button type="button" style="width:100%" @click="showUserMenu=false; doLogout()" x-text="t('btn_logout')"></button>
+        </div>
+      </template>
     </div>
   </div>
-  <select class="langsel" x-model="lang" @change="applyLang()" title="Language / 语言">
-    <option value="en">EN English</option>
-    <option value="zh">中文 Chinese</option>
-  </select>
-  <select class="themesel" x-model="theme" @change="applyTheme()" title="Theme / 主题">
-    <option value="midnight">🌙 暗夜 Midnight</option>
-    <option value="ocean">🌊 海洋 Ocean</option>
-    <option value="forest">🌲 森林 Forest</option>
-    <option value="dusk">🌆 暮色 Dusk</option>
-    <option value="rose">🌹 玫瑰 Rose</option>
-    <option value="nord">❄️ Nord</option>
-    <option value="light">☀️ 浅色 Light</option>
-  </select>
 </header>
 
 <main>
   <!-- LEFT: submit + job list -->
   <div class="left">
-    <div class="submit">
-      <input type="text" x-model="target" :placeholder="t('target_placeholder')"
-             @keydown.enter="submit()">
-      <button @click="submit()" x-text="t('analyze')"></button>
-    </div>
-    <div class="uprow">
-      <label :title="ghidraAvailable ? '' : t('decompile_unavailable_hint')">
-        <input type="checkbox" x-model="decompile" :disabled="!ghidraAvailable"
-               style="width:auto;display:inline;vertical-align:middle;margin-right:5px">
-        <span x-text="t('decompile_label')"></span>
-      </label>
-      <span x-show="!ghidraAvailable" class="chip warn" x-text="t('decompile_unavailable')"></span>
-    </div>
-    <div class="uprow">
-      <label>
-        <span x-text="uploading ? t('uploading') : t('upload_file')"></span>
-        <input type="file" @change="upload($event)">
-      </label>
-      <span x-text="t('upload_hint')"></span>
+    <div class="railhead">
+      <div class="submit">
+        <input type="text" x-model="target" :placeholder="t('target_placeholder')"
+               @keydown.enter="submit()">
+        <button @click="submit()" x-text="t('analyze')"></button>
+      </div>
+      <div class="railopts">
+        <button class="ghost sm" @click="submitExtract()" :disabled="!moriaVersion"
+                :title="moriaVersion ? t('btn_extract_hint')+' · '+moriaVersion : t('extract_unavailable_hint')"
+                x-text="t('btn_extract')"></button>
+        <span x-show="!moriaVersion" class="chip warn" x-text="t('extract_unavailable')"></span>
+        <label :title="ghidraAvailable ? '' : t('decompile_unavailable_hint')">
+          <input type="checkbox" x-model="decompile" :disabled="!ghidraAvailable">
+          <span x-text="t('decompile_short')"></span>
+        </label>
+        <span x-show="!ghidraAvailable" class="chip warn" x-text="t('decompile_unavailable')"></span>
+        <span class="spacer"></span>
+        <label class="iconbtn" :title="uploading ? t('uploading') : t('upload_file')">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          <input type="file" @change="upload($event)" style="display:none">
+        </label>
+      </div>
     </div>
 
-    <template x-if="!jobs.length">
-      <div class="empty" x-text="t('no_jobs')"></div>
-    </template>
-    <div class="batchbar" x-show="deletableJobs.length">
-      <label class="chk"><input type="checkbox" :checked="deleteSelected.length && deleteSelected.length===deletableJobs.length"
-                                 @change="selectAllForDelete()">
+    <div class="railsec">
+      <span class="hd" x-text="t('scans_label')"></span>
+      <span class="tag num" x-text="jobs.length"></span>
+      <span class="spacer" style="flex:1"></span>
+      <label class="chk" x-show="deletableJobs.length" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer">
+        <input type="checkbox" style="width:auto" :checked="deleteSelected.length && deleteSelected.length===deletableJobs.length"
+               @change="selectAllForDelete()">
         <span x-text="t('select_all')"></span></label>
       <button class="ghost sm" x-show="deleteSelected.length" @click="deleteSelectedJobs()"
               x-text="`${t('btn_delete_selected')} (${deleteSelected.length})`"></button>
     </div>
+
+    <div class="raillist">
+    <template x-if="!jobs.length">
+      <div class="empty" x-text="t('no_jobs')"></div>
+    </template>
     <template x-for="j in jobs" :key="j.id">
       <div class="job" :class="{sel: j.id===selectedId}" @click="select(j.id)">
         <div class="row1">
           <input type="checkbox" x-show="['completed','failed','cancelled'].includes(j.status)"
                  :checked="deleteSelected.includes(j.id)" @click.stop="toggleDeleteSelect(j.id)"
                  style="width:auto;flex:none">
+          <span class="dot" :class="j.status"></span>
           <div class="targetwrap">
             <div class="target-name" :title="j.target" x-text="targetName(j.target)"></div>
             <div class="target-dir" x-show="targetDir(j.target)" :title="j.target" x-text="targetDir(j.target)"></div>
           </div>
           <span class="jobid" :title="j.id" x-text="jobIdShort(j.id)"></span>
+          <span class="chip neutral" x-show="j.kind==='extract'" x-text="t('kind_extract')"></span>
           <span class="badge" :class="j.status" x-text="tStatus(j.status)"></span>
         </div>
-        <div class="bar"><span :style="`width:${j.progress}%`"></span></div>
+        <div class="bar" x-show="['queued','running','paused'].includes(j.status)"><span :style="`width:${j.progress}%`"></span></div>
         <div class="meta">
           <span x-show="['queued','running'].includes(j.status) && !j.stage" class="spinner sm"></span>
-          <span x-text="(j.stage||(j.status==='queued'?t('waiting_to_start'):'—'))+' '+j.progress+'%'"></span>
-          <span x-show="j.detail && j.status!=='completed'" x-text="j.detail"></span>
-          <template x-if="j.status==='completed'">
+          <span x-show="['queued','running','paused'].includes(j.status)" style="flex:none;white-space:nowrap"
+                x-text="(j.stage||(j.status==='queued'?t('waiting_to_start'):'—'))+' '+j.progress+'%'"></span>
+          <span class="detail" x-show="j.detail && j.status!=='completed'" :title="j.detail" x-text="j.detail"></span>
+          <template x-if="j.status==='completed' && j.kind==='extract'">
+            <span style="display:flex;gap:4px;align-items:center">
+              <span class="chip neutral" x-text="(j.regions||[]).filter(r=>r.usable).length+'/'+(j.regions||[]).length+' '+t('chip_regions')"></span>
+            </span>
+          </template>
+          <template x-if="j.status==='completed' && j.kind!=='extract'">
             <span style="display:flex;gap:4px;align-items:center">
               <span class="chip" :class="j.high_crit>0 ? 'bad' : 'ok'" x-text="j.findings+' '+t('chip_findings')"></span>
               <template x-if="j.high_crit>0"><span class="chip bad" x-text="j.high_crit+' '+t('chip_highcrit')"></span></template>
@@ -648,18 +932,19 @@
         </div>
         <div class="jobctl" x-show="['completed','failed','cancelled'].includes(j.status)" @click.stop>
           <button class="ghost sm" @click="deleteJob(j.id)" x-text="t('btn_delete')"></button>
-          <button class="ghost sm" x-show="j.status==='completed'" @click="openAIAnalysisForJob(j.id)" x-text="t('tab_ai')"></button>
+          <button class="ghost sm" x-show="j.status==='completed' && j.kind!=='extract'" @click="openAIAnalysisForJob(j.id)" x-text="t('tab_ai')"></button>
           <button class="ghost sm" @click="rescan(j)" :title="t('btn_rescan_hint')" x-text="t('btn_rescan')"></button>
         </div>
       </div>
     </template>
+    </div>
   </div>
 
   <!-- RIGHT: report views -->
   <div class="right">
     <!-- CVE DATABASE -->
     <template x-if="showVulnDB">
-      <div>
+      <div class="pane">
         <h2 x-text="t('btn_vulndb')"></h2>
         <p class="tag" x-text="t('vulndb_hint')"></p>
         <template x-if="vulnDBLoading">
@@ -733,7 +1018,7 @@
 
     <!-- SENSITIVE-STRING DICTIONARY (standalone management, independent of any scan) -->
     <template x-if="showSensitiveDict">
-      <div>
+      <div class="pane">
         <h2 x-text="t('btn_sensitive_dict')"></h2>
         <p class="tag" x-text="t('kw_help')"></p>
         <div class="kwrow">
@@ -754,7 +1039,7 @@
 
     <!-- COMPARE -->
     <template x-if="!showVulnDB && !showSensitiveDict && compareMode">
-      <div>
+      <div class="pane">
         <h2 x-text="t('btn_compare')"></h2>
         <div class="filters">
           <select x-model="compareA">
@@ -1132,7 +1417,7 @@
       </div>
     </template>
 
-    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && (!summary || reportLoading)">
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.kind!=='extract' && selJob.status==='completed' && (!summary || reportLoading)">
       <div class="loadingBox">
         <template x-if="!reportLoadError">
           <div style="width:280px">
@@ -1149,28 +1434,70 @@
       </div>
     </template>
 
-    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.status==='completed' && summary && !reportLoading">
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.kind==='extract' && selJob.status==='completed'">
       <div>
+        <h2 x-text="selJob.target"></h2>
+        <p class="meta" x-text="t('extract_regions_found')+': '+(selJob.regions||[]).length+' — '+t('extract_usable_count')+': '+(selJob.regions||[]).filter(r=>r.usable).length"></p>
+        <div class="table-wrap">
+          <table class="bins">
+            <thead><tr>
+              <th x-text="t('extract_th_type')"></th>
+              <th x-text="t('extract_th_offset')"></th>
+              <th x-text="t('extract_th_size')"></th>
+              <th x-text="t('extract_th_status')"></th>
+              <th x-text="t('extract_th_path')"></th>
+              <th x-text="t('extract_th_actions')"></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="(r,i) in (selJob.regions||[])" :key="i">
+                <tr>
+                  <td><span class="chip neutral" x-text="r.type"></span>
+                      <span class="chip neutral" x-show="r.category" x-text="r.category"></span></td>
+                  <td class="path" x-text="'0x'+r.offset.toString(16)"></td>
+                  <td>
+                    <div x-text="t('extract_region_size')+': '+formatSize(r.region_size)"></div>
+                    <div class="meta" x-text="t('extract_extracted_size')+': '+formatSize(r.bytes)+' · '+r.files+'f/'+r.dirs+'d'"></div>
+                  </td>
+                  <td>
+                    <span class="chip" :class="r.usable ? 'ok' : 'bad'" x-text="r.status"></span>
+                    <div class="meta" style="margin-top:2px" x-show="r.warnings&&r.warnings.length" x-text="r.warnings.join('; ')"></div>
+                  </td>
+                  <td class="path" :title="r.path" x-text="r.path || '—'"></td>
+                  <td>
+                    <template x-if="r.usable">
+                      <span style="display:flex;gap:6px;flex-wrap:wrap">
+                        <button @click="submitFromRegion(r.path, 'analyze')" x-text="t('extract_btn_analyze')"></button>
+                        <button class="ghost sm" @click="submitFromRegion(r.path, 'extract')" x-text="t('extract_btn_reextract')"></button>
+                      </span>
+                    </template>
+                    <span x-show="!r.usable" x-text="'—'"></span>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <template x-if="!(selJob.regions||[]).length">
+            <div class="empty" x-text="t('extract_none_found')"></div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="!showVulnDB && !showSensitiveDict && !compareMode && selJob && selJob.kind!=='extract' && selJob.status==='completed' && summary && !reportLoading">
+      <div>
+        <!-- Five primary tabs. Everything that used to be a top-level tab is
+             still one click away, under the tab that owns it. -->
         <div class="tabs">
           <button :class="{active:tab==='dashboard'}" @click="tab='dashboard'" x-text="t('tab_dashboard')"></button>
-          <button :class="{active:tab==='findings'}" @click="tab='findings'"
-                  x-text="`${t('tab_findings')} (${summary.findings})`"></button>
-          <button :class="{active:tab==='binaries'}" @click="tab='binaries'"
-                  x-text="`${t('tab_binaries')} (${binariesPage.total})`"></button>
-          <button :class="{active:tab==='scripts'}" @click="tab='scripts'"
-                  x-text="`${t('tab_scripts')} (${scriptsPage.total})`"></button>
-          <button :class="{active:tab==='components'}" @click="tab='components'"
-                  x-text="`${t('tab_components')} (${componentsPage.total})`"></button>
-          <button :class="{active:tab==='files'}" @click="tab='files'"
-                  x-text="`${t('tab_files')} (${summary.file_count})`"></button>
-          <button :class="{active:tab==='strings'}" @click="tab='strings'; onStringsTab()"
-                  x-text="`${t('tab_strings')} (${totalStrings})`"></button>
-          <button :class="{active:tab==='sensitive'}" @click="tab='sensitive'; computeSensitive()"
-                  x-text="`${t('tab_sensitive')} (${sensitiveResults.length})`"></button>
-          <button :class="{active:tab==='busybox'}" @click="tab='busybox'"
-                  x-text="`${t('tab_busybox')} (${extraCommands.length})`"></button>
-          <button :class="{active:tab==='services'}" @click="tab='services'"
-                  x-text="`${t('tab_services')} (${services.length})`"></button>
+          <button :class="{active:tab==='findings'}" @click="tab='findings'">
+            <span x-text="t('tab_findings')"></span><span class="cnt" x-text="fmtNum(summary.findings)"></span>
+          </button>
+          <button :class="{active:INVENTORY_TABS.includes(tab)}" @click="goInventory()">
+            <span x-text="t('tab_inventory')"></span><span class="cnt" x-text="fmtNum(inventoryTotal())"></span>
+          </button>
+          <button :class="{active:STRING_TABS.includes(tab)}" @click="goStrings()">
+            <span x-text="t('tab_strings')"></span><span class="cnt" x-text="fmtNum(totalStrings)"></span>
+          </button>
           <button :class="{active:tab==='ai'}" @click="tab='ai'; loadAIAnalysis()" x-text="t('tab_ai')"></button>
           <span class="spacer"></span>
           <div class="exp">
@@ -1180,23 +1507,83 @@
           </div>
         </div>
 
+        <div class="subnav" x-show="INVENTORY_TABS.includes(tab)">
+          <nav class="segnav">
+            <button :class="{active:tab==='binaries'}" @click="tab='binaries'">
+              <span x-text="t('tab_binaries')"></span><span class="cnt" x-text="fmtNum(binariesPage.total)"></span></button>
+            <button :class="{active:tab==='scripts'}" @click="tab='scripts'">
+              <span x-text="t('tab_scripts')"></span><span class="cnt" x-text="fmtNum(scriptsPage.total)"></span></button>
+            <button :class="{active:tab==='components'}" @click="tab='components'">
+              <span x-text="t('tab_components')"></span><span class="cnt" x-text="fmtNum(componentsPage.total)"></span></button>
+            <button :class="{active:tab==='files'}" @click="tab='files'">
+              <span x-text="t('tab_files')"></span><span class="cnt" x-text="fmtNum(summary.file_count)"></span></button>
+            <button :class="{active:tab==='busybox'}" @click="tab='busybox'">
+              <span x-text="t('tab_busybox')"></span><span class="cnt" x-text="fmtNum(extraCommands.length)"></span></button>
+            <button :class="{active:tab==='services'}" @click="tab='services'">
+              <span x-text="t('tab_services')"></span><span class="cnt" x-text="fmtNum(services.length)"></span></button>
+          </nav>
+        </div>
+
+        <div class="subnav" x-show="STRING_TABS.includes(tab)">
+          <nav class="segnav">
+            <button :class="{active:tab==='strings'}" @click="tab='strings'; onStringsTab()">
+              <span x-text="t('tab_all_strings')"></span><span class="cnt" x-text="fmtNum(totalStrings)"></span></button>
+            <button :class="{active:tab==='sensitive'}" @click="tab='sensitive'; computeSensitive()">
+              <span x-text="t('tab_sensitive')"></span><span class="cnt" x-text="fmtNum(sensitiveResults.length)"></span></button>
+          </nav>
+        </div>
+
+        <div class="pane">
+
         <!-- DASHBOARD -->
         <div x-show="tab==='dashboard'">
+          <!-- The severity split is what the analyst reads first, so it gets a
+               card of its own with a proportional bar. The rest of the counts
+               drop to a tile row at three-quarter weight. -->
+          <div class="riskcard">
+            <div class="top">
+              <span class="total" x-text="fmtNum(summary.findings)"></span>
+              <span class="sub" x-text="t('dash_findings_over').replace('{n}', fmtNum(summary.binaries))"></span>
+              <span class="spacer"></span>
+              <a href="#" @click.prevent="goToFindings()" x-show="summary.findings>0"
+                 style="font-size:12.5px;font-weight:500" x-text="t('dash_open_findings')"></a>
+            </div>
+            <div class="sevbar" x-show="summary.findings>0">
+              <template x-for="s in SEVS" :key="'bar-'+s">
+                <span x-show="sevCount(s)>0" :class="'bg-'+SHORT[s]"
+                      :style="`width:${(sevCount(s)/Math.max(1,summary.findings))*100}%`"
+                      :title="tSev(s)+': '+sevCount(s)"></span>
+              </template>
+            </div>
+            <div class="sevkeys">
+              <template x-for="s in SEVS" :key="'key-'+s">
+                <button class="sevkey" x-show="sevCount(s)>0" @click="goToFindings({sevOnly:s})">
+                  <span class="sw" :class="'bg-'+SHORT[s]"></span>
+                  <span class="lb" x-text="tSev(s)"></span>
+                  <span class="vl" :class="'sev-'+SHORT[s]" x-text="fmtNum(sevCount(s))"></span>
+                </button>
+              </template>
+              <span class="spacer" style="flex:1"></span>
+              <span class="tag" x-show="cveCount>0" style="cursor:pointer" @click="goToCves()"
+                    x-text="t('dash_cve_line').replace('{c}', fmtNum(cveCount)).replace('{k}', fmtNum(componentsPage.total))"></span>
+            </div>
+          </div>
+
           <div class="cards">
-            <div class="card" :class="{clickable: summary.findings>0}" @click="summary.findings>0 && goToFindings()">
-              <div class="n" x-text="summary.findings"></div><div class="l" x-text="t('card_findings')"></div>
-            </div>
-            <div class="card" :class="{clickable: sevCount('critical')>0}" @click="sevCount('critical')>0 && goToFindings({sevOnly:'critical'})">
-              <div class="n sev-crit" x-text="sevCount('critical')"></div><div class="l" x-text="t('card_critical')"></div>
-            </div>
-            <div class="card" :class="{clickable: sevCount('high')>0}" @click="sevCount('high')>0 && goToFindings({sevOnly:'high'})">
-              <div class="n sev-high" x-text="sevCount('high')"></div><div class="l" x-text="t('card_high')"></div>
-            </div>
             <div class="card" :class="{clickable: summary.binaries>0}" @click="summary.binaries>0 && (tab='binaries')">
-              <div class="n" x-text="summary.binaries"></div><div class="l" x-text="t('card_binaries')"></div>
+              <div class="n" x-text="fmtNum(summary.binaries)"></div><div class="l" x-text="t('card_binaries')"></div>
+            </div>
+            <div class="card" :class="{clickable: scriptsPage.total>0}" @click="scriptsPage.total>0 && (tab='scripts')">
+              <div class="n" x-text="fmtNum(scriptsPage.total)"></div><div class="l" x-text="t('tab_scripts')"></div>
+            </div>
+            <div class="card" :class="{clickable: componentsPage.total>0}" @click="componentsPage.total>0 && (tab='components')">
+              <div class="n" x-text="fmtNum(componentsPage.total)"></div><div class="l" x-text="t('fw_components')"></div>
+            </div>
+            <div class="card" :class="{clickable: summary.file_count>0}" @click="summary.file_count>0 && (tab='files')">
+              <div class="n" x-text="fmtNum(summary.file_count)"></div><div class="l" x-text="t('fw_files')"></div>
             </div>
             <div class="card" :class="{clickable: cveCount>0}" @click="cveCount>0 && goToCves()">
-              <div class="n" x-text="cveCount"></div><div class="l" x-text="t('card_cves')"></div>
+              <div class="n" x-text="fmtNum(cveCount)"></div><div class="l" x-text="t('card_cves')"></div>
             </div>
           </div>
           <div class="fwmeta" x-show="summary.kernel_version || summary.arch_summary || summary.file_count">
@@ -1305,8 +1692,12 @@
           <div class="filters">
             <div class="sevtog">
               <template x-for="s in SEVS" :key="s">
-                <button :class="{on:f.sev[s]}" :style="f.sev[s]?`background:var(--${SHORT[s]});border-color:var(--${SHORT[s]})`:''"
-                        @click="f.sev[s]=!f.sev[s]; loadFindings()" x-text="tSev(s)[0].toUpperCase()" :title="tSev(s)"></button>
+                <button :class="[SHORT[s], f.sev[s] ? 'on' : '']" :title="tSev(s)"
+                        @click="f.sev[s]=!f.sev[s]; loadFindings()">
+                  <span class="sw"></span>
+                  <span x-text="tSev(s)"></span>
+                  <span class="cnt" x-show="sevCount(s)>0" x-text="fmtNum(sevCount(s))"></span>
+                </button>
               </template>
             </div>
             <select x-model="f.vclass" @change="loadFindings()">
@@ -1323,11 +1714,15 @@
             <input type="text" x-model.debounce.400ms="f.q" @input="loadFindings()" :placeholder="t('search_placeholder')">
             <label class="rng"><span x-text="t('conf_label')"></span>
               <input type="range" min="0" max="1" step="0.05" x-model.number="f.minConf" @change="loadFindings()" style="width:90px">
-              <span x-text="f.minConf"></span>
+              <span class="num" style="width:34px;text-align:right" x-text="Math.round(f.minConf*100)+'%'"></span>
             </label>
             <select x-model="sort" @change="loadFindings()">
               <option value="severity" x-text="t('sort_severity')"></option>
               <option value="confidence" x-text="t('sort_confidence')"></option>
+            </select>
+            <select x-model="groupBy" @change="localStorage.setItem('ifda-fgroup', groupBy); seedCollapsedGroups()" :title="t('group_by')">
+              <option value="component" x-text="t('group_by_component')"></option>
+              <option value="" x-text="t('group_by_none')"></option>
             </select>
             <span class="count" x-text="findingsPage.total+' '+t('chip_findings')"></span>
             <button class="ghost sm" @click="exportFilteredCSV()" x-text="t('export_filtered_csv')"></button>
@@ -1335,19 +1730,39 @@
           </div>
 
           <template x-if="!findings.length"><div class="empty" x-text="t('no_findings_match')"></div></template>
-          <template x-for="(f, fidx) in findings" :key="f.id+'-'+fidx">
-            <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
+          <!-- One row list for both modes: findingRows() emits group bands and
+               finding rows in order, so the finding markup exists once and a
+               collapsed group simply stops emitting its rows. -->
+          <div :class="groupBy ? 'flist' : ''" x-show="findings.length">
+          <template x-for="row in findingRows()" :key="row.key">
+            <div>
+            <template x-if="row.type==='group'">
+              <button class="fgrouphd" @click="toggleGroup(row.key)">
+                <span class="car" x-text="row.open?'▾':'▸'"></span>
+                <span class="nm" x-text="row.name"></span>
+                <span class="ver" x-show="row.version" x-text="row.version"></span>
+                <span class="tag" x-show="row.collapsedNote" x-text="row.collapsedNote"></span>
+                <span class="chip neutral" x-text="row.count+' '+t('chip_findings')"></span>
+                <span class="spacer"></span>
+                <template x-for="s in SEVS" :key="row.key+'-'+s">
+                  <span class="sevpip" :class="SHORT[s]" x-show="row.sev[s]>0" :title="tSev(s)" x-text="row.sev[s]"></span>
+                </template>
+                <span class="pth" x-show="row.path" :title="row.path" x-text="row.path"></span>
+              </button>
+            </template>
+            <template x-if="row.type==='finding'">
+            <div class="finding" :class="[SHORT[row.f.severity], groupBy ? '' : 'flat']" x-data="{open:false, f:row.f}">
               <div class="hd" @click="open=!open; if(open) triageHistoryFor(f.id)">
                 <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
-                <span class="t" x-text="f.title"></span>
-                <span class="sub" style="margin:0" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
+                <span class="t" :title="f.title" x-text="row.label"></span>
+                <span class="sub" style="margin:0;flex:none;white-space:nowrap" x-text="f.vuln_class+' · '+Math.round(f.confidence*100)+'%'"></span>
                 <span x-show="(f.triage&&f.triage!=='new')" class="cur" :class="f.triage" x-text="tTriage(f.triage)"></span>
-                <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0">
+                <span x-show="f.cve_ids&&f.cve_ids.length" class="sub cvelist" style="margin:0">
                   <template x-for="(cve, ci) in f.cve_ids" :key="cve">
                     <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" @click.stop x-text="cve"></a><span x-show="ci < f.cve_ids.length-1">, </span></span>
                   </template>
                 </span>
-                <span x-text="open?'▾':'▸'"></span>
+                <span style="flex:none;color:var(--muted)" x-text="open?'▾':'▸'"></span>
               </div>
               <div class="body" x-show="open">
                 <div class="sub" x-text="t('component_label')+': '+f.component+'  ·  '+t('rule_label')+': '+f.rule+'  ·  '+t('id_label')+': '+f.id"></div>
@@ -1388,7 +1803,10 @@
                 </div>
               </div>
             </div>
+            </template>
+            </div>
           </template>
+          </div>
           <div class="pager" x-show="findingsPage.total > findingsPage.limit">
             <button class="ghost sm" :disabled="findingsPage.offset<=0" @click="findingsPrevPage()" x-text="t('btn_prev_page')"></button>
             <span class="sub" x-text="(findingsPage.offset+1)+'–'+Math.min(findingsPage.offset+findingsPage.limit, findingsPage.total)+' / '+findingsPage.total"></span>
@@ -1404,37 +1822,64 @@
 
         <!-- BINARIES -->
         <div x-show="tab==='binaries'">
+          <!-- The six hardening slots are only readable as a strip once they
+               are named, and the strip is the whole point of the column. -->
+          <div class="hardlegend">
+            <span style="font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)"
+                  x-text="t('hard_legend')"></span>
+            <span><span class="k">NX</span> no-execute</span>
+            <span><span class="k">CN</span> <span x-text="t('hard_canary')"></span></span>
+            <span><span class="k">RL</span> RELRO</span>
+            <span><span class="k">PI</span> PIE</span>
+            <span><span class="k">FT</span> FORTIFY</span>
+            <span><span class="k">SY</span> <span x-text="t('hard_symbols')"></span></span>
+            <span style="flex:1"></span>
+            <span><span class="sw" style="background:var(--ok)"></span><span x-text="t('hard_on')"></span></span>
+            <span><span class="sw" style="background:var(--warn)"></span><span x-text="t('hard_partial')"></span></span>
+            <span><span class="sw" style="background:var(--bad)"></span><span x-text="t('hard_off')"></span></span>
+          </div>
           <div class="table-wrap">
             <table class="bins">
+              <colgroup>
+                <col style="width:auto"><col style="width:110px"><col style="width:80px">
+                <col style="width:222px"><col style="width:110px"><col style="width:86px">
+                <col style="width:70px"><col style="width:268px">
+              </colgroup>
               <thead><tr>
                 <th x-text="t('th_binary')"></th><th x-text="t('th_arch')"></th><th x-text="t('th_libc')"></th>
-                <th x-text="t('th_mitigations')"></th><th x-text="t('th_fns')"></th><th x-text="t('th_warnings')"></th>
+                <th x-text="t('th_mitigations')"></th>
                 <th x-text="t('th_cves')"></th>
-                <th x-text="t('th_strings')"></th>
+                <th style="text-align:right" x-text="t('th_strings')"></th>
+                <th style="text-align:right" x-text="t('th_fns')"></th>
                 <th x-text="t('th_md5')"></th>
               </tr></thead>
               <tbody>
                 <template x-for="b in binaries" :key="b.path">
                   <tr>
-                    <td class="path" :title="b.path" x-text="shortPath(b.path)"></td>
-                    <td x-text="(b.arch||'?')+' '+(b.bits||'')+' '+(b.endian||'')+(b.is_library?' (lib)':'')"></td>
-                    <td x-text="b.libc||'—'"></td>
-                    <td x-html="mitChips(b.mitigations)"></td>
-                    <td x-text="(b.functions&&b.functions.length)||0"></td>
-                    <td>
-                      <span x-show="b.warnings&&b.warnings.length" class="chip warn"
-                            :title="(b.warnings||[]).join('\n')" x-text="'⚠ '+((b.warnings&&b.warnings.length)||0)"></span>
-                      <span x-show="!(b.warnings&&b.warnings.length)">—</span>
+                    <td class="dirpath" :title="b.path">
+                      <span class="pwrap">
+                        <span class="dir" x-text="dirOf(b.path)"></span><span class="base" x-text="baseOf(b.path)"></span>
+                        <span x-show="b.warnings&&b.warnings.length" class="chip warn" style="margin-left:6px;flex:none"
+                              :title="(b.warnings||[]).join('\n')" x-text="'⚠ '+((b.warnings&&b.warnings.length)||0)"></span>
+                      </span>
                     </td>
+                    <td class="cell1 mono" style="font-size:12px"
+                        x-text="archLabel(b)"></td>
+                    <td class="cell1 mono" style="font-size:12px" x-text="b.libc||'—'"></td>
+                    <td><div class="hard" x-html="hardStrip(b.mitigations)"></div></td>
                     <td>
-                      <template x-for="(cve, ci) in cvesFor(b.path)" :key="cve">
-                        <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" x-text="cve"></a><span x-show="ci < cvesFor(b.path).length-1">, </span></span>
+                      <template x-if="cvesFor(b.path).length">
+                        <button class="chip bad clickable" style="cursor:pointer;border:0"
+                                :title="cvesFor(b.path).join(', ')"
+                                @click="goToFindings({q: baseOf(b.path)})"
+                                x-text="cvesFor(b.path).length+' '+t('th_cves')"></button>
                       </template>
-                      <span x-show="!cvesFor(b.path).length">—</span>
+                      <span x-show="!cvesFor(b.path).length" style="color:var(--dim)">—</span>
                     </td>
-                    <td><a href="#" @click.prevent="tab='strings'; stringsBinary=b.path"
-                           x-text="(b.strings&&b.strings.length)||0"></a></td>
-                    <td class="path" :title="b.md5||''" x-text="b.md5||'—'"></td>
+                    <td class="num"><a href="#" @click.prevent="tab='strings'; stringsBinary=b.path"
+                           x-text="fmtNum((b.strings&&b.strings.length)||0)"></a></td>
+                    <td class="num" style="color:var(--muted)" x-text="fmtNum((b.functions&&b.functions.length)||0)"></td>
+                    <td class="md5" :title="b.md5||''" x-text="b.md5||'—'"></td>
                   </tr>
                 </template>
               </tbody>
@@ -1853,6 +2298,8 @@
             </div>
           </template>
         </div>
+
+        </div><!-- /.pane -->
       </div>
     </template>
   </div>
@@ -1862,12 +2309,36 @@
 <script>
 const SEVS = ["critical","high","medium","low","info"];
 const SHORT = {critical:"crit",high:"high",medium:"med",low:"low",info:"info"};
+// The six inventory views and the two string views used to be top-level tabs;
+// they are now children of one primary tab each, and these keep the parent lit.
+const INVENTORY_TABS = ["binaries","scripts","components","files","busybox","services"];
+const STRING_TABS = ["strings","sensitive"];
 
 // UI-chrome translations only. Finding titles/descriptions/vuln_class/component/rule
 // come from the analysis engine (ifda/) and are left as generated (English), same as
 // technical acronyms (NX/RELRO/PIE/…) and internal pipeline stage names.
 const I18N = {
   tagline:              { en: "IoT Firmware Deep Analysis",           zh: "IoT 固件深度分析" },
+  actor_label:          { en: "Display name for triage log",          zh: "定级日志显示名" },
+  language_label:       { en: "Language",                            zh: "语言" },
+  theme_label:          { en: "Theme",                               zh: "主题" },
+  scans_label:          { en: "Scans",                               zh: "扫描" },
+  decompile_short:      { en: "Ghidra decompile",                    zh: "Ghidra 反编译" },
+  tab_inventory:        { en: "Inventory",                           zh: "清单" },
+  tab_all_strings:      { en: "All strings",                         zh: "全部字符串" },
+  dash_findings_over:   { en: "findings across {n} binaries",        zh: "个发现，覆盖 {n} 个二进制" },
+  dash_open_findings:   { en: "Open findings \u2192",                 zh: "查看发现 \u2192" },
+  dash_cve_line:        { en: "{c} CVEs matched against {k} components", zh: "{c} 个 CVE，比对 {k} 个组件" },
+  group_by:             { en: "Group findings by",                   zh: "发现分组方式" },
+  group_collapsed:      { en: "collapsed",                          zh: "已折叠" },
+  group_by_component:   { en: "Group: component",                    zh: "分组: 组件" },
+  group_by_none:        { en: "Group: none",                         zh: "分组: 不分组" },
+  hard_legend:          { en: "Hardening slots",                     zh: "加固位" },
+  hard_canary:          { en: "stack canary",                        zh: "栈保护" },
+  hard_symbols:         { en: "symbols kept",                        zh: "保留符号" },
+  hard_on:              { en: "on",                                  zh: "开启" },
+  hard_partial:         { en: "partial",                             zh: "部分" },
+  hard_off:             { en: "off",                                 zh: "关闭" },
   target_placeholder:   { en: "/path/to/binary or extracted rootfs",  zh: "二进制路径或已解包的固件目录" },
   analyze:              { en: "Analyze",                              zh: "分析" },
   uploading:            { en: "Uploading…",                           zh: "上传中…" },
@@ -1876,6 +2347,9 @@ const I18N = {
   decompile_label:      { en: "Decompile with Ghidra (slow, enriches findings with pseudocode)",
                            zh: "使用 Ghidra 反编译(较慢,会为发现附加伪代码)" },
   decompile_unavailable: { en: "Ghidra not found on server",          zh: "服务端未检测到 Ghidra" },
+  extract_unavailable:  { en: "moria not found on server",           zh: "服务端未检测到 moria" },
+  extract_unavailable_hint: { en: "Firmware extraction needs moria on the server. Build the bundled submodule with scripts/build-moria.sh, or install moria on PATH.",
+                               zh: "固件解包需要服务端有 moria。用 scripts/build-moria.sh 构建随仓库附带的子模块,或把 moria 装到 PATH 上。" },
   decompile_unavailable_hint: { en: "Set GHIDRA_HOME or install to /opt/ghidra on the server to enable this.",
                                  zh: "在服务端设置 GHIDRA_HOME 或将 Ghidra 安装到 /opt/ghidra 即可启用。" },
   no_jobs:              { en: "No jobs yet.",                         zh: "暂无任务。" },
@@ -1909,6 +2383,25 @@ const I18N = {
   btn_rescan:           { en: "Re-scan",                               zh: "重新扫描" },
   btn_rescan_hint:      { en: "Re-analyze this target from scratch (bypasses the cache, unlike resubmitting the same path)",
                            zh: "重新完整分析这个目标(跳过缓存,和直接重新提交同一路径不同)" },
+  btn_extract:          { en: "Extract",                                zh: "解包" },
+  btn_extract_hint:     { en: "Identify + unpack a raw firmware image (via moria) into candidate filesystem regions, instead of analyzing an already-extracted directory",
+                           zh: "识别并解包原始固件镜像(通过 moria),得到候选文件系统区域列表,而不是直接分析一个已解包好的目录" },
+  kind_extract:         { en: "extract",                                zh: "解包" },
+  chip_regions:         { en: "usable regions",                         zh: "可用区域" },
+  extract_regions_found:{ en: "Regions found",                          zh: "发现区域数" },
+  extract_usable_count: { en: "Usable",                                 zh: "可用数" },
+  extract_th_type:      { en: "Type",                                   zh: "类型" },
+  extract_th_offset:    { en: "Offset",                                 zh: "偏移量" },
+  extract_th_size:      { en: "Size",                                   zh: "大小" },
+  extract_region_size:  { en: "In image",                                zh: "镜像内占用" },
+  extract_extracted_size: { en: "Extracted",                            zh: "解出内容" },
+  extract_th_status:    { en: "Status",                                 zh: "状态" },
+  extract_th_path:      { en: "Extracted path",                         zh: "解包路径" },
+  extract_th_actions:   { en: "Actions",                                zh: "操作" },
+  extract_btn_analyze:  { en: "Start analysis",                         zh: "开始分析" },
+  extract_btn_reextract:{ en: "Extract again",                          zh: "再次解包" },
+  extract_none_found:   { en: "moria found nothing extractable in this target.",
+                           zh: "moria 在这个目标里没找到可解包的内容。" },
   stage_disassemble:    { en: "Disassembling",                        zh: "反汇编中" },
   stage_decompile:      { en: "Decompiling (Ghidra)",                 zh: "反编译中(Ghidra)" },
   dash_dirchart_h:      { en: "Rootfs composition",                    zh: "根文件系统占用分布" },
@@ -2276,7 +2769,7 @@ function app() {
     filePreviewPath: "", filePreviewLoading: false, filePreviewCache: {},
     busyboxDirFilter: "", busyboxQuery: "",
     target: "/bin/ls", uploading: false, sse: null,
-    decompile: false, ghidraAvailable: true,
+    decompile: false, ghidraAvailable: true, moriaVersion: "",
     deleteSelected: [],
     authToken: localStorage.getItem("ifda-token") || "",
     username: localStorage.getItem("ifda-username") || "", showUserMenu: false,
@@ -2308,6 +2801,11 @@ function app() {
     f: { sev:{critical:true,high:true,medium:true,low:true,info:true},
          vclass:"", triage:"", q:"", minConf:0 },
     sort: "severity",
+    // Group the visible findings page by component. Findings are paged
+    // server-side, so this groups what is on screen, which is where the
+    // repetition actually shows up.
+    groupBy: localStorage.getItem("ifda-fgroup") === null ? "component" : localStorage.getItem("ifda-fgroup"),
+    collapsedGroups: [],
     stringsBinary: "", stringsQuery: "",
     sensitiveKeywords: (() => {
       try {
@@ -2328,6 +2826,7 @@ function app() {
       try {
         const h = await (await fetch("/healthz")).json();
         this.ghidraAvailable = !!h.ghidra_available;
+        this.moriaVersion = h.moria_version || "";
         this.loginRequired = !!h.login_required;
       } catch (e) { /* keep defaults; a job will surface the real error if it matters */ }
       if (this.loginRequired && !this.authToken) {
@@ -2431,11 +2930,6 @@ function app() {
     tSev(s) { return this.t("sev_" + s); },
     tTriage(s) { return this.t("triage_" + (s || "new")); },
     tStatus(s) { return this.t("status_" + s); },
-    summaryText() {
-      const b = (this.summary && this.summary.binaries) || 0;
-      const n = (this.summary && this.summary.findings) || 0;
-      return this.lang === "zh" ? `${b} 个二进制 · ${n} 个发现` : `${b} binaries · ${n} findings`;
-    },
     async refreshJobs() {
       try { this.jobs = await (await this.apiFetch("/api/jobs")).json(); } catch(e){}
     },
@@ -2457,9 +2951,37 @@ function app() {
     async rescan(job) {
       const r = await this.apiFetch("/api/jobs", {method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({target:job.target, decompile:job.decompile, force:true})});
+        body:JSON.stringify({kind:job.kind||"analyze", target:job.target, decompile:job.decompile, force:true})});
       const j = await r.json();
       if (!r.ok) { alert(j.error||"rescan failed"); return; }
+      await this.refreshJobs(); this.select(j.id);
+    },
+    // Identify + unpack a raw firmware image via moria (FR-ING/FR-EXT) --
+    // a separate job kind from analyze, see the "extract" branch of the
+    // job detail view. Does not pick a rootfs automatically; the resulting
+    // region list is what submitFromRegion() acts on.
+    async submitExtract() {
+      const t = (this.target||"").trim(); if (!t) return;
+      const r = await this.apiFetch("/api/jobs", {method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:"extract", target:t})});
+      const j = await r.json();
+      if (!r.ok) { alert(j.error||"extract failed"); return; }
+      await this.refreshJobs(); this.select(j.id);
+    },
+    // From one region of a completed extract job: either submit it as a
+    // normal analyze target (it looks like a real unpacked directory tree),
+    // or run extract again on it (moria only went one level deep -- e.g. it
+    // unpacked a container but left a compressed stream inside untouched).
+    // Both are just new jobs against this path; no special-casing needed
+    // beyond picking which kind.
+    async submitFromRegion(path, kind) {
+      const body = kind === "extract" ? {kind:"extract", target:path}
+                                       : {target:path, decompile:this.ghidraAvailable && this.decompile};
+      const r = await this.apiFetch("/api/jobs", {method:"POST",
+        headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+      const j = await r.json();
+      if (!r.ok) { alert(j.error||"submit failed"); return; }
       await this.refreshJobs(); this.select(j.id);
     },
     async upload(ev) {
@@ -2485,7 +3007,9 @@ function app() {
       this.selectedId = id; this.summary = null; this.tab = "dashboard";
       if (this.sse) { this.sse.close(); this.sse = null; }
       const job = this.jobs.find(x => x.id === id);
-      if (job && job.status === "completed") { this.loadReport(id); return; }
+      // "extract" jobs have no findings report at all (Regions instead) --
+      // loadReport() would 404 against /api/jobs/{id}/summary for one.
+      if (job && job.status === "completed") { if (job.kind !== "extract") this.loadReport(id); return; }
       if (job && job.status === "failed") return;
       if (this.archChartUrl) { URL.revokeObjectURL(this.archChartUrl); this.archChartUrl = null; }
       this.archChartCounts = {};
@@ -2495,7 +3019,7 @@ function app() {
         const idx = this.jobs.findIndex(x => x.id === j.id);
         if (idx >= 0) this.jobs[idx] = j;
         this.maybeUpdateArchChart(j);
-        if (j.status === "completed") { this.closeSSE(); this.loadReport(id); }
+        if (j.status === "completed") { this.closeSSE(); if (j.kind !== "extract") this.loadReport(id); }
         if (j.status === "failed") this.closeSSE();
       };
       this.sse.onerror = () => this.closeSSE();
@@ -2610,7 +3134,7 @@ function app() {
       if (resetOffset) this.findingsPage.offset = 0;
       const p = this.findingsQueryParams();
       const r = await this.apiFetch(`/api/jobs/${this.selectedId}/findings?${p}`);
-      if (r.ok) this.findingsPage = await r.json();
+      if (r.ok) { this.findingsPage = await r.json(); this.seedCollapsedGroups(); }
     },
     findingsPrevPage() {
       if (this.findingsPage.offset <= 0) return;
@@ -3724,6 +4248,135 @@ function app() {
       this.goToFindings({ vclass: "known_cve", q: binaryPath || "" });
     },
     shortPath(p) { const parts=p.split("/"); return parts.length>3 ? ".../"+parts.slice(-2).join("/") : p; },
+    // Every count in the interface goes through this so thousands separators
+    // are consistent and the caller doesn't have to remember .toLocaleString().
+    fmtNum(n) { const v = Number(n); return Number.isFinite(v) ? v.toLocaleString() : "0"; },
+    baseOf(p) { if (!p) return ""; const i = p.lastIndexOf("/"); return i < 0 ? p : p.slice(i+1); },
+    dirOf(p)  { if (!p) return ""; const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i+1); },
+    // One line, not four: "arm 32 little (lib)" wrapped in a narrow column.
+    archLabel(b) {
+      if (!b || !b.arch) return "—";
+      const end = b.endian === "little" ? "LE" : b.endian === "big" ? "BE" : "";
+      return [(b.arch||"") + (b.bits||""), end, b.is_library ? "(lib)" : ""].filter(Boolean).join(" ");
+    },
+    // Six fixed slots, always the same order and the same width, so the column
+    // reads down the table as a matrix instead of reflowing per row.
+    hardStrip(m) {
+      if (!m) return `<span class="na" title="unknown">··</span>`.repeat(6);
+      const cell = (k, state, title) =>
+        `<span class="${state}" title="${title}">${k}</span>`;
+      const yn = (k, v, label) => v
+        ? cell(k, "on",  `${label}: on`)
+        : cell(k, "off", `${label}: off`);
+      const relro = m.relro === "full"    ? cell("RL","on","RELRO: full")
+                  : m.relro === "partial" ? cell("RL","part","RELRO: partial")
+                  :                         cell("RL","off","RELRO: off");
+      return [
+        yn("NX", m.nx, "no-execute"),
+        yn("CN", m.canary, "stack canary"),
+        relro,
+        yn("PI", m.pie, "PIE"),
+        yn("FT", m.fortify, "FORTIFY"),
+        m.stripped ? cell("SY","off","symbols: stripped") : cell("SY","on","symbols: kept"),
+      ].join("");
+    },
+    // ---- tab grouping ----
+    // The inventory and string views are no longer top-level tabs; these keep
+    // the primary tab lit while one of its children is showing.
+    inventoryTotal() {
+      return (this.binariesPage.total||0) + (this.scriptsPage.total||0) +
+             (this.componentsPage.total||0) + (this.services.length||0);
+    },
+    goInventory() { if (!INVENTORY_TABS.includes(this.tab)) this.tab = "binaries"; },
+    goStrings()   { if (!STRING_TABS.includes(this.tab)) { this.tab = "strings"; this.onStringsTab(); } },
+    // Facts pinned next to the image name in the header, in place of the old
+    // static tagline. Only the ones this report actually carries.
+    headerFacts() {
+      const s = this.summary || {}, out = [];
+      if (s.arch_summary) out.push(this.archChip(s));
+      if (s.kernel_version) out.push("Linux " + s.kernel_version);
+      if (s.firmware_size) out.push(this.formatSize(s.firmware_size));
+      return out;
+    },
+    archChip(s) {
+      const end = s.endian_summary === "little" ? "LE" : s.endian_summary === "big" ? "BE" : "";
+      return [s.arch_summary, end].filter(Boolean).join(" ");
+    },
+    // ---- finding groups ----
+    // Findings are paged server-side, so this groups the page you are looking
+    // at. That is exactly where the repetition hurts: a severity-sorted page of
+    // known_cve findings is long runs of the same component, one card each.
+    toggleGroup(key) {
+      this.collapsedGroups = this.collapsedGroups.includes(key)
+        ? this.collapsedGroups.filter(k => k !== key)
+        : [...this.collapsedGroups, key];
+    },
+    // Groups larger than this start collapsed, which is the whole point: a run
+    // of forty-eight tcpdump CVEs should be one line until you ask for it.
+    GROUP_AUTOCOLLAPSE: 5,
+    // component may arrive as "busybox@1.25.1" or as a bare name with the
+    // version in its own field; both end up as one name + one version.
+    splitComponent(f) {
+      const raw = (f && f.component) || "";
+      if (raw.includes("@")) {
+        const i = raw.lastIndexOf("@");
+        return { name: raw.slice(0, i), version: raw.slice(i + 1) };
+      }
+      const bin = this.baseOf((f && f.evidence && f.evidence[0] && f.evidence[0].binary) || "");
+      return { name: raw || bin || "—", version: (f && f.component_version) || "" };
+    },
+    // Inside a group the component name is already on the band above, so
+    // "busybox 1.25.1: CVE-2018-1000517" collapses to the part that differs.
+    rowLabel(f, g) {
+      const title = (f && f.title) || "";
+      if (!g) return title;
+      for (const pre of [g.name + " " + g.version + ": ", g.name + "@" + g.version + ": ", g.name + ": "]) {
+        if (pre.trim() !== ":" && title.startsWith(pre)) return title.slice(pre.length);
+      }
+      return title;
+    },
+    groupFindings() {
+      const order = [], byKey = new Map();
+      for (const f of (this.findings || [])) {
+        const { name, version } = this.splitComponent(f);
+        const key = name + "@" + version;
+        let g = byKey.get(key);
+        if (!g) {
+          g = { key, name, version, count:0, path:"",
+                sev:{critical:0,high:0,medium:0,low:0,info:0}, items:[] };
+          byKey.set(key, g); order.push(g);
+        }
+        g.count++;
+        if (g.sev[f.severity] !== undefined) g.sev[f.severity]++;
+        if (!g.path && f.evidence && f.evidence[0] && f.evidence[0].binary) g.path = f.evidence[0].binary;
+        g.items.push(f);
+      }
+      return order;
+    },
+    // Called once per loaded page rather than from findingRows(), so rendering
+    // stays a pure read of state.
+    seedCollapsedGroups() {
+      if (!this.groupBy) { this.collapsedGroups = []; return; }
+      this.collapsedGroups = this.groupFindings()
+        .filter(g => g.count > this.GROUP_AUTOCOLLAPSE)
+        .map(g => g.key);
+    },
+    findingRows() {
+      const list = this.findings || [];
+      if (!this.groupBy) {
+        return list.map((f, i) => ({ type:"finding", key:"f"+i+"-"+f.id, f, label:f.title }));
+      }
+      const rows = [];
+      for (const g of this.groupFindings()) {
+        const open = !this.collapsedGroups.includes(g.key);
+        rows.push({ type:"group", key:g.key, name:g.name, version:g.version,
+                    count:g.count, sev:g.sev, path:g.path, open,
+                    collapsedNote: open ? "" : this.t("group_collapsed") });
+        if (open) g.items.forEach((f, i) => rows.push(
+          { type:"finding", key:g.key+"-"+i+"-"+f.id, f, label:this.rowLabel(f, g) }));
+      }
+      return rows;
+    },
     // Splits a scan target into a bold "name" (last path segment) + a muted
     // "dir" (everything before it), so two jobs against similarly-long paths
     // (a common case when re-scanning sibling directories of one firmware
@@ -3779,21 +4432,6 @@ function app() {
     // NVD's detail page for one CVE id -- every place a CVE number is shown
     // links here (opened in a new tab, not navigating away from the scan).
     cveUrl(cve) { return `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(cve)}`; },
-    mitChips(m) {
-      if (!m) return "—";
-      const c = (label, good, cls) => `<span class="chip ${cls}">${good?'✓':'✗'} ${label}</span>`;
-      const relro = m.relro==="full" ? c("RELRO",true,"ok")
-                  : m.relro==="partial" ? `<span class="chip warn">~ RELRO</span>`
-                  : c("RELRO",false,"bad");
-      return [
-        c("NX", m.nx, m.nx?"ok":"bad"),
-        c("Canary", m.canary, m.canary?"ok":"bad"),
-        relro,
-        c("PIE", m.pie, m.pie?"ok":"bad"),
-        c("FORTIFY", m.fortify, m.fortify?"ok":"warn"),
-        m.stripped ? `<span class="chip warn">stripped</span>` : ""
-      ].join("");
-    },
   };
 }
 </script>
