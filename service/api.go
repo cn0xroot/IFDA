@@ -161,6 +161,7 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/jobs/{id}/stop", a.auth(a.stopJob))
 	mux.HandleFunc("DELETE /api/jobs/{id}", a.auth(a.deleteJob))
 	mux.HandleFunc("POST /api/jobs/batch-delete", a.auth(a.batchDeleteJobs))
+	mux.HandleFunc("POST /api/compare", a.auth(a.getCompare))
 	mux.HandleFunc("GET /api/triage/history", a.auth(a.triageHistory))
 	mux.HandleFunc("GET /api/vulndb", a.auth(a.getVulnDB))
 	mux.HandleFunc("POST /api/chart/pie", a.auth(a.renderPieChart))
@@ -366,6 +367,45 @@ func (a *API) getReport(w http.ResponseWriter, r *http.Request) {
 // getSummary is the lightweight, always-fully-loaded aggregate the dashboard
 // renders from (counts by severity/vuln-class, totals) — safe to load in
 // full regardless of how large the underlying scan was.
+// getCompare computes an A→B scan diff server-side. The old compare ran
+// entirely in the browser, fetching both jobs' full-document reports and
+// diffing them in JS -- but a large scan's report exceeds V8's ~512 MiB max
+// string length, so JSON.parse threw and the diff came back all zeros (see
+// ReportDB.CompareJobs). Doing it here against the SQLite tables removes that
+// ceiling and returns only the deltas.
+func (a *API) getCompare(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		A                 string   `json:"a"`
+		B                 string   `json:"b"`
+		SensitiveKeywords []string `json:"sensitive_keywords"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.A == "" || req.B == "" {
+		writeErr(w, http.StatusBadRequest, "both a and b job ids are required")
+		return
+	}
+	for _, id := range []string{req.A, req.B} {
+		job, ok := a.store.Get(id)
+		if !ok {
+			writeErr(w, http.StatusNotFound, "job not found: "+id)
+			return
+		}
+		if job.Status != StatusCompleted {
+			writeErr(w, http.StatusConflict, "report not ready ("+id+" is "+string(job.Status)+")")
+			return
+		}
+	}
+	result, err := a.reportDB.CompareJobs(req.A, req.B, req.SensitiveKeywords)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "compare failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (a *API) getSummary(w http.ResponseWriter, r *http.Request) {
 	job, ok := a.store.Get(r.PathValue("id"))
 	if !ok {

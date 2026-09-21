@@ -1067,11 +1067,12 @@
         <template x-if="compareResult">
           <div>
             <div class="cards">
-              <div class="card"><div class="n sev-crit" x-text="compareResult.added.length"></div><div class="l" x-text="t('compare_added')"></div></div>
-              <div class="card"><div class="n sev-low" x-text="compareResult.removed.length"></div><div class="l" x-text="t('compare_removed')"></div></div>
-              <div class="card"><div class="n" x-text="compareResult.common.length"></div><div class="l" x-text="t('compare_common')"></div></div>
+              <div class="card"><div class="n sev-crit" x-text="compareResult.addedTotal"></div><div class="l" x-text="t('compare_added')"></div></div>
+              <div class="card"><div class="n sev-low" x-text="compareResult.removedTotal"></div><div class="l" x-text="t('compare_removed')"></div></div>
+              <div class="card"><div class="n" x-text="compareResult.commonCount"></div><div class="l" x-text="t('compare_common')"></div></div>
             </div>
             <h3 x-text="t('compare_added')"></h3>
+            <template x-if="compareResult.addedTotal > compareResult.added.length"><div class="sub" style="margin:0 0 6px" x-text="'⋯ '+compareResult.added.length+' / '+compareResult.addedTotal"></div></template>
             <template x-if="!compareResult.added.length"><div class="empty" x-text="t('compare_none')"></div></template>
             <template x-for="(f, fidx) in compareResult.added" :key="f.id+'-'+fidx">
               <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
@@ -1108,6 +1109,7 @@
               </div>
             </template>
             <h3 style="margin-top:18px" x-text="t('compare_removed')"></h3>
+            <template x-if="compareResult.removedTotal > compareResult.removed.length"><div class="sub" style="margin:0 0 6px" x-text="'⋯ '+compareResult.removed.length+' / '+compareResult.removedTotal"></div></template>
             <template x-if="!compareResult.removed.length"><div class="empty" x-text="t('compare_none')"></div></template>
             <template x-for="(f, fidx) in compareResult.removed" :key="f.id+'-'+fidx">
               <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
@@ -1143,6 +1145,53 @@
                 </div>
               </div>
             </template>
+            <div x-data="{openCommon:false}">
+              <h3 style="margin-top:18px;cursor:pointer" @click="openCommon=!openCommon">
+                <span x-text="t('compare_common')"></span>
+                <span class="sub" style="margin:0" x-text="'('+compareResult.commonTotal+')'"></span>
+                <span x-text="openCommon?'▾':'▸'"></span>
+              </h3>
+              <template x-if="openCommon">
+                <div>
+                  <template x-if="compareResult.commonTotal > compareResult.common.length"><div class="sub" style="margin:0 0 6px" x-text="'\u22ef '+compareResult.common.length+' / '+compareResult.commonTotal"></div></template>
+                  <template x-if="!compareResult.common.length"><div class="empty" x-text="t('compare_none')"></div></template>
+                  <template x-for="(f, fidx) in compareResult.common" :key="f.id+'-'+fidx">
+                    <div class="finding" :class="SHORT[f.severity]" x-data="{open:false}">
+                      <div class="hd" @click="open=!open">
+                        <span class="sevtag" :class="'bg-'+SHORT[f.severity]" x-text="tSev(f.severity)"></span>
+                        <span class="t" x-text="f.title"></span>
+                        <span class="sub" style="margin:0" x-text="f.vuln_class+' \u00b7 '+Math.round(f.confidence*100)+'%'"></span>
+                        <span x-show="f.cve_ids&&f.cve_ids.length" class="sub" style="margin:0">
+                          <template x-for="(cve, ci) in f.cve_ids" :key="cve">
+                            <span><a :href="cveUrl(cve)" target="_blank" rel="noopener" @click.stop x-text="cve"></a><span x-show="ci < f.cve_ids.length-1">, </span></span>
+                          </template>
+                        </span>
+                        <span x-text="open?'\u25be':'\u25b8'"></span>
+                      </div>
+                      <div class="body" x-show="open">
+                        <div class="sub" x-text="t('component_label')+': '+f.component+'  \u00b7  '+t('rule_label')+': '+f.rule+'  \u00b7  '+t('id_label')+': '+f.id"></div>
+                        <div class="desc" x-text="f.description"></div>
+                        <template x-for="(e,i) in (f.evidence||[])" :key="i">
+                          <div class="ev"><span class="loc" x-text="[e.binary,e.function,e.address].filter(Boolean).join(' : ')"></span><br>
+                            <span x-text="e.snippet"></span>
+                            <template x-if="e.taint_path && e.taint_path.length">
+                              <div class="taint" x-text="'\u21b3 '+e.taint_path.join(' \u2192 ')"></div>
+                            </template>
+                          </div>
+                        </template>
+                        <template x-if="f.pseudocode">
+                          <details>
+                            <summary style="cursor:pointer;color:var(--muted);font-size:12px;margin-top:8px" x-text="t('pseudocode_label')"></summary>
+                            <pre class="code" x-text="f.pseudocode"></pre>
+                          </details>
+                        </template>
+                        <div class="sub" x-show="f.remediation" x-text="'\u25b8 '+f.remediation"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
 
             <h3 style="margin-top:18px" x-text="t('compare_counts')"></h3>
             <div class="cards">
@@ -3934,155 +3983,25 @@ function app() {
       if (!this.compareA || !this.compareB) return;
       this.comparing = true; this.compareResult = null; this.compareProgress = 0;
       try {
-        // Checking r.ok matters here specifically: an expired/invalid auth
-        // token, a deleted job, or any other server error still returns a
-        // parseable JSON body (an {"error": ...} object, not a report) --
-        // without this check, that body's missing `findings`/`files` arrays
-        // silently read as "this side has nothing", producing a wildly
-        // misleading diff (every one of A's findings shown as "removed",
-        // none "common") instead of a clear error.
-        const fetchReport = async (jobId) => {
-          const r = await this.apiFetch(`/api/jobs/${jobId}/report`);
-          const body = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(`${jobId}: ${body.error || `HTTP ${r.status}`}`);
-          this.compareProgress += 50; // each of the two report fetches is half the work
-          return body;
-        };
-        const [ra, rb] = await Promise.all([fetchReport(this.compareA), fetchReport(this.compareB)]);
-
-        // Relative, not absolute: A and B are almost always two
-        // independently-extracted firmware trees (e.g. old vs. new firmware
-        // images, or two different partitions like bank_A/bank_B) with
-        // different absolute roots, so comparing raw absolute paths would
-        // make every single file/finding look like an unrelated add+remove
-        // pair even when nothing actually changed.
-        const relPath = (path, root) => (root && path.startsWith(root)) ? path.slice(root.length).replace(/^\/+/, "") : path;
-
-        // Finding identity for cross-job matching. NOT the same as f.id:
-        // f.id (Finding.fingerprint() in model.py) bakes in the *absolute*
-        // evidence path, so two scans of the same binary under different
-        // extraction roots always produced different ids -- "common" was
-        // silently empty and everything looked added+removed even for
-        // byte-identical firmware. Rebuild the same rule|vuln_class|loc|cves
-        // key here with the evidence path relativized to each job's target.
-        const findingKey = (f, root) => {
-          const loc = (f.evidence||[]).map(e =>
-            `${relPath(e.binary||"", root)}:${e.function||""}:${e.address||0}:${e.snippet||""}`).join(";");
-          const cves = [...(f.cve_ids||[])].sort().join(",");
-          return `${f.rule}|${f.vuln_class}|${loc}|${cves}`;
-        };
-        const aByKey = new Map((ra.findings||[]).map(f => [findingKey(f, ra.target), f]));
-        const bByKey = new Map((rb.findings||[]).map(f => [findingKey(f, rb.target), f]));
-
-        // File-level diff over the *complete* file listing (ra.files/rb.files
-        // -- every file in the tree, not just ELF binaries + recognized
-        // scripts). Falls back to binaries+scripts for jobs ingested before
-        // the full file listing existed. Keyed by relative path, with MD5 to
-        // tell "modified" (same relative path, different content) apart from
-        // a plain add/remove.
-        const filesA = (ra.files && ra.files.length) ? ra.files : [...(ra.binaries||[]), ...(ra.scripts||[])];
-        const filesB = (rb.files && rb.files.length) ? rb.files : [...(rb.binaries||[]), ...(rb.scripts||[])];
-        const aByPath = new Map(filesA.map(f => [relPath(f.path, ra.target), f.md5||""]));
-        const bByPath = new Map(filesB.map(f => [relPath(f.path, rb.target), f.md5||""]));
-        const fileDiff = { added: [], removed: [], modified: [], unchangedCount: 0 };
-        for (const [path, md5] of bByPath) {
-          if (!aByPath.has(path)) fileDiff.added.push({path, md5});
-          else if (aByPath.get(path) !== md5) fileDiff.modified.push({path, md5A: aByPath.get(path), md5B: md5});
-          else fileDiff.unchangedCount++;
-        }
-        for (const [path, md5] of aByPath) {
-          if (!bByPath.has(path)) fileDiff.removed.push({path, md5});
-        }
-
-        // String diff: aggregate every extracted string on each side into a
-        // set, then diff the sets. Sourced from binaries *and* files (configs/
-        // scripts carry their own extracted strings too -- see
-        // stringsSources), not just ELF binaries, otherwise a credential added
-        // only to a config file would never show up here. Capped for display
-        // -- a large firmware can have tens of thousands of distinct strings.
-        const STR_CAP = 2000;
-        const allStrings = (rep) => new Set([
-          ...(rep.binaries||[]).flatMap(b => b.strings||[]),
-          ...(rep.files||[]).flatMap(f => f.strings||[]),
-        ]);
-        const stringsA = allStrings(ra);
-        const stringsB = allStrings(rb);
-        const addedStrings = [...stringsB].filter(s => !stringsA.has(s));
-        const removedStrings = [...stringsA].filter(s => !stringsB.has(s));
-
-        // Sensitive-string diff: same keyword list as the Sensitive tab,
-        // applied to each side's aggregate strings, then diffed -- e.g. a
-        // hardcoded credential that appears in the new firmware but wasn't
-        // in the old one.
-        const kws = this.sensitiveKeywords.map(k => k.toLowerCase()).filter(Boolean);
-        const matchSensitive = (strs) => {
-          const out = new Set();
-          for (const s of strs) {
-            const low = s.toLowerCase();
-            if (kws.some(k => low.includes(k))) out.add(s);
-          }
-          return out;
-        };
-        const sensA = matchSensitive(stringsA);
-        const sensB = matchSensitive(stringsB);
-
-        // Function-level diff (FR-INV): same-path binaries only, matched by
-        // function name -- see ifda/re/disasm.py's per-function mnemonic-
-        // histogram fingerprint (Function.fingerprint) for what "modified"
-        // means here. This is NOT full BinDiff-style renamed-function
-        // matching: a function that only changed name (re-stripped/re-
-        // symbolized) between scans shows as one removed + one added, not
-        // one modified. A binary present on only one side is skipped here
-        // (already covered by fileDiff above) -- every function in it would
-        // trivially be "all added" or "all removed", which adds noise
-        // without new information.
-        const binariesByPathA = new Map((ra.binaries||[]).map(b => [relPath(b.path, ra.target), b]));
-        const binariesByPathB = new Map((rb.binaries||[]).map(b => [relPath(b.path, rb.target), b]));
-        const functionDiff = { counts: {added:0, removed:0, modified:0, unchanged:0}, rows: [] };
-        for (const [path, binA] of binariesByPathA) {
-          const binB = binariesByPathB.get(path);
-          if (!binB) continue;
-          const fnA = new Map((binA.functions||[]).map(f => [f.name, f]));
-          const fnB = new Map((binB.functions||[]).map(f => [f.name, f]));
-          for (const [name, a] of fnA) {
-            const b = fnB.get(name);
-            if (!b) {
-              functionDiff.counts.removed++;
-              functionDiff.rows.push({path, name, status:'removed', sizeA:a.size, sizeB:null, callsA:(a.calls||[]).length, callsB:null});
-            } else if (!a.fingerprint || !b.fingerprint || a.fingerprint !== b.fingerprint) {
-              // No fingerprint on either side (unsupported arch, or a
-              // fallback pseudo-function with nothing decoded) can't be
-              // confirmed equal -- treat as modified rather than risk a
-              // false "unchanged".
-              functionDiff.counts.modified++;
-              functionDiff.rows.push({path, name, status:'modified', sizeA:a.size, sizeB:b.size, callsA:(a.calls||[]).length, callsB:(b.calls||[]).length});
-            } else {
-              functionDiff.counts.unchanged++;
-            }
-          }
-          for (const [name, b] of fnB) {
-            if (!fnA.has(name)) {
-              functionDiff.counts.added++;
-              functionDiff.rows.push({path, name, status:'added', sizeA:null, sizeB:b.size, callsA:null, callsB:(b.calls||[]).length});
-            }
-          }
-        }
-
-        this.compareResult = {
-          added: [...bByKey.entries()].filter(([k]) => !aByKey.has(k)).map(([,f]) => f),
-          removed: [...aByKey.entries()].filter(([k]) => !bByKey.has(k)).map(([,f]) => f),
-          common: [...bByKey.entries()].filter(([k]) => aByKey.has(k)).map(([,f]) => f),
-          binariesA: (ra.binaries||[]).length, binariesB: (rb.binaries||[]).length,
-          scriptsA: (ra.scripts||[]).length, scriptsB: (rb.scripts||[]).length,
-          filesA: filesA.length, filesB: filesB.length,
-          fileDiff,
-          functionDiff,
-          stringsAdded: addedStrings.slice(0, STR_CAP), stringsAddedTotal: addedStrings.length,
-          stringsRemoved: removedStrings.slice(0, STR_CAP), stringsRemovedTotal: removedStrings.length,
-          sensitiveAdded: [...sensB].filter(s => !sensA.has(s)),
-          sensitiveRemoved: [...sensA].filter(s => !sensB.has(s)),
-        };
-        this.fetchFunctionDiffChart(functionDiff.counts);
+        // Server-side diff. The old version fetched BOTH jobs' full-document
+        // reports and diffed them in JS -- but a large scan's report is
+        // 600+ MB, past V8's ~512 MiB max string length, so r.json() threw,
+        // the catch swallowed it, and the diff came back all zeros. The
+        // /api/compare endpoint does the whole diff against the SQLite tables
+        // and returns only the deltas (see ReportDB.CompareJobs). The render
+        // below is unchanged; only the data source moved off the client.
+        const r = await this.apiFetch('/api/compare', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            a: this.compareA, b: this.compareB,
+            sensitive_keywords: this.sensitiveKeywords,
+          }),
+        });
+        this.compareProgress = 100;
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+        this.compareResult = body;
+        this.fetchFunctionDiffChart(body.functionDiff.counts);
       } catch (e) {
         alert("compare failed: " + e);
       } finally {

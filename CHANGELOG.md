@@ -5,6 +5,32 @@ before/after numbers, test counts) lives in [`PROGRESS.md`](PROGRESS.md)'s
 变更记录 (Chinese). Entries for v3.5 and earlier are summarized in
 [`README.md`](README.md#changelog); this file continues from v3.6 onward.
 
+## v4.4 — 2026-09-21
+
+Compare scans now works on large reports. It always returned an all-zero diff (0 new,
+0 removed, 0→0 binaries) for any real firmware scan. Root cause: `runCompare()` fetched
+`/api/jobs/{id}/report` — the full-document export — for **both** sides and called
+`r.json()` on each, but a large scan's report is 600+ MB, past V8's ~512 MiB maximum
+string length. `r.json()` threw `Invalid string length`, the surrounding
+`.catch(() => ({}))` swallowed it, and every field read back empty, so the diff looked
+like "both sides have nothing." This violated the project's own rule (stated in
+`reportdb.go`) that the interactive UI never loads a whole report at once — compare was
+the last code path that still did.
+
+The diff now runs server-side. New endpoint `POST /api/compare` (`{a, b,
+sensitive_keywords}`) computes findings / files / strings / functions / sensitive-string
+deltas directly against the SQLite tables in `ReportDB.CompareJobs`, keyed identically to
+the old client-side diff (`rule|vuln_class|relLoc|sortedCVEs`), and returns only the
+deltas. A partial-unmarshal struct drops each binary's `exports`/`imports` (tens of
+thousands of symbols the diff never reads) without materializing them. `runCompare()` is
+now a single POST; the compare UI renders the response unchanged. Rendered finding lists
+cap at 1000 per side (`addedTotal`/`removedTotal` carry the true counts), function-diff
+detail rows at 5000, and strings at 2000 — the browser cannot lay out 50k+ cards. On the
+2024↔2026 Tesla firmware pair (605 MB + 627 MB reports) the response drops from an
+impossible 1.2 GB of client-side parsing to a 15 MB server-computed diff in ~12 s.
+
+Go + embedded frontend both changed, so the service binary must be rebuilt.
+
 ## v4.3 — 2026-09-16
 
 Web UI: information architecture, list density, and text contrast. No API or schema change —

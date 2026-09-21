@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1210,4 +1211,434 @@ func rawMessagesOrEmpty(v []json.RawMessage) []json.RawMessage {
 		return []json.RawMessage{}
 	}
 	return v
+}
+
+// --- Cross-job comparison (server-side diff) ---
+//
+// CompareJobs computes the whole A→B diff (findings, files, strings,
+// functions, sensitive strings) here in Go, so the web UI never has to load
+// two full reports into the browser. The old runCompare() fetched
+// /api/jobs/{id}/report (the full-document export) for BOTH sides and called
+// r.json() on each -- but a large scan's report is 600+ MB, which exceeds
+// V8's ~512 MiB maximum string length, so r.json() threw "Invalid string
+// length", the surrounding .catch(()=>({})) swallowed it, and every field
+// read back as empty -> an all-zero diff. This endpoint returns only the
+// deltas (a few MB), keyed exactly as the old client-side diff was, so the
+// existing compare UI renders it unchanged.
+
+const compareFuncRowCap = 5000 // cap detail rows, not counts (counts stay exact)
+const compareStrCap = 2000     // matches the old client-side STR_CAP
+const compareFindingCap = 1000 // cap rendered added/removed findings (totals stay exact)
+
+// compareBinary is the subset of a binaries.data blob the diff needs.
+// Deliberately omits exports/imports (tens of thousands of symbols, ~4 MB per
+// large binary) which the diff never reads -- decoding into this struct drops
+// them without ever materializing them, which is what keeps a compare of two
+// 600 MB reports small.
+type compareBinary struct {
+	Path      string   `json:"path"`
+	MD5       string   `json:"md5"`
+	Strings   []string `json:"strings"`
+	Functions []struct {
+		Name        string            `json:"name"`
+		Fingerprint string            `json:"fingerprint"`
+		Size        json.RawMessage   `json:"size"`
+		Calls       []json.RawMessage `json:"calls"`
+	} `json:"functions"`
+}
+
+type compareFile struct {
+	Path    string   `json:"path"`
+	MD5     string   `json:"md5"`
+	Strings []string `json:"strings"`
+}
+
+// compareRelPath mirrors the old client-side relPath(): strip the job's
+// extraction root so two independently-extracted trees (old vs. new firmware)
+// compare by relative path, not absolute.
+func compareRelPath(path, root string) string {
+	if root != "" && strings.HasPrefix(path, root) {
+		return strings.TrimLeft(path[len(root):], "/")
+	}
+	return path
+}
+
+func compareAsString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// compareAsAddr mirrors JS `${e.address||0}` -- any falsy value becomes "0".
+func compareAsAddr(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return "0"
+	case string:
+		if t == "" {
+			return "0"
+		}
+		return t
+	case json.Number:
+		if t == "" || t == "0" {
+			return "0"
+		}
+		return t.String()
+	case bool:
+		if t {
+			return "true"
+		}
+		return "0"
+	default:
+		return "0"
+	}
+}
+
+func (r *ReportDB) jobTarget(jobID string) (string, error) {
+	var target string
+	err := r.db.QueryRow(`SELECT target FROM report_meta WHERE job_id = ?`, jobID).Scan(&target)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("job %s not found", jobID)
+	}
+	return target, err
+}
+
+func (r *ReportDB) countRows(table, jobID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE job_id = ?`, jobID).Scan(&n)
+	return n, err
+}
+
+// findingsForCompare returns, for one job, a map keyed by the same cross-job
+// identity the old client-side diff used (rule|vuln_class|relLoc|sortedCVEs)
+// to the finding object shaped for the compare UI's finding cards.
+func (r *ReportDB) findingsForCompare(jobID, root string) (map[string]map[string]any, error) {
+	rows, err := r.db.Query(`SELECT id, title, vuln_class, severity, confidence,
+		component, rule, description, remediation, cve_ids, evidence, pseudocode
+		FROM findings WHERE job_id = ?`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[string]any{}
+	for rows.Next() {
+		var id, title, vclass, sev, component, rule, desc, remediation, cveIDs, evidence, pseudocode string
+		var conf float64
+		if err := rows.Scan(&id, &title, &vclass, &sev, &conf, &component, &rule,
+			&desc, &remediation, &cveIDs, &evidence, &pseudocode); err != nil {
+			return nil, err
+		}
+		var cves []string
+		_ = json.Unmarshal([]byte(cveIDs), &cves)
+		sortedCVEs := append([]string(nil), cves...)
+		sort.Strings(sortedCVEs)
+
+		var evs []map[string]any
+		dec := json.NewDecoder(strings.NewReader(evidence))
+		dec.UseNumber()
+		_ = dec.Decode(&evs)
+		locParts := make([]string, 0, len(evs))
+		for _, e := range evs {
+			locParts = append(locParts, compareRelPath(compareAsString(e["binary"]), root)+
+				":"+compareAsString(e["function"])+
+				":"+compareAsAddr(e["address"])+
+				":"+compareAsString(e["snippet"]))
+		}
+		key := rule + "|" + vclass + "|" + strings.Join(locParts, ";") + "|" + strings.Join(sortedCVEs, ",")
+		out[key] = map[string]any{
+			"id": id, "title": title, "vuln_class": vclass, "severity": sev,
+			"confidence": conf, "component": component, "rule": rule,
+			"description": desc, "remediation": remediation, "pseudocode": pseudocode,
+			"cve_ids":  json.RawMessage(cveIDs),
+			"evidence": json.RawMessage(evidence),
+		}
+	}
+	return out, rows.Err()
+}
+
+// filesForCompare returns relpath->md5 for the full file listing plus every
+// extracted string from those files (configs/scripts carry their own).
+func (r *ReportDB) filesForCompare(jobID, root string) (map[string]string, map[string]struct{}, error) {
+	raws, err := r.ListFilesAll(jobID, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	byPath := make(map[string]string, len(raws))
+	strs := map[string]struct{}{}
+	for _, raw := range raws {
+		var f compareFile
+		if err := json.Unmarshal(raw, &f); err != nil {
+			continue
+		}
+		byPath[compareRelPath(f.Path, root)] = f.MD5
+		for _, s := range f.Strings {
+			strs[s] = struct{}{}
+		}
+	}
+	return byPath, strs, nil
+}
+
+// binariesForCompare streams the binaries table, decoding only the fields the
+// diff needs (path/md5/strings/functions), keyed by relative path.
+func (r *ReportDB) binariesForCompare(jobID, root string) (map[string]compareBinary, map[string]struct{}, error) {
+	rows, err := r.db.Query(`SELECT data FROM binaries WHERE job_id = ?`, jobID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	byPath := map[string]compareBinary{}
+	strs := map[string]struct{}{}
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, nil, err
+		}
+		var b compareBinary
+		if err := json.Unmarshal([]byte(data), &b); err != nil {
+			continue
+		}
+		byPath[compareRelPath(b.Path, root)] = b
+		for _, s := range b.Strings {
+			strs[s] = struct{}{}
+		}
+	}
+	return byPath, strs, rows.Err()
+}
+
+func (r *ReportDB) CompareJobs(jobA, jobB string, sensitiveKW []string) (map[string]any, error) {
+	rootA, err := r.jobTarget(jobA)
+	if err != nil {
+		return nil, err
+	}
+	rootB, err := r.jobTarget(jobB)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- findings diff ----
+	fA, err := r.findingsForCompare(jobA, rootA)
+	if err != nil {
+		return nil, err
+	}
+	fB, err := r.findingsForCompare(jobB, rootB)
+	if err != nil {
+		return nil, err
+	}
+	added := []map[string]any{}
+	removed := []map[string]any{}
+	common := []map[string]any{}
+	for k, f := range fB {
+		if _, ok := fA[k]; ok {
+			common = append(common, f)
+		} else {
+			added = append(added, f)
+		}
+	}
+	for k, f := range fA {
+		if _, ok := fB[k]; !ok {
+			removed = append(removed, f)
+		}
+	}
+
+	// ---- files (full listing) + their strings ----
+	filesA, strsA, err := r.filesForCompare(jobA, rootA)
+	if err != nil {
+		return nil, err
+	}
+	filesB, strsB, err := r.filesForCompare(jobB, rootB)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- binaries (path/md5/strings/functions) ----
+	binsA, binStrA, err := r.binariesForCompare(jobA, rootA)
+	if err != nil {
+		return nil, err
+	}
+	binsB, binStrB, err := r.binariesForCompare(jobB, rootB)
+	if err != nil {
+		return nil, err
+	}
+	for s := range binStrA {
+		strsA[s] = struct{}{}
+	}
+	for s := range binStrB {
+		strsB[s] = struct{}{}
+	}
+
+	// ---- file diff (relpath + md5) ----
+	// Fall back to binaries' paths only if the full file listing is empty
+	// (jobs ingested before the files table existed).
+	if len(filesA) == 0 {
+		for p, b := range binsA {
+			filesA[p] = b.MD5
+		}
+	}
+	if len(filesB) == 0 {
+		for p, b := range binsB {
+			filesB[p] = b.MD5
+		}
+	}
+	fileAdded := []map[string]any{}
+	fileRemoved := []map[string]any{}
+	fileModified := []map[string]any{}
+	fileUnchanged := 0
+	for p, md5 := range filesB {
+		if a, ok := filesA[p]; !ok {
+			fileAdded = append(fileAdded, map[string]any{"path": p, "md5": md5})
+		} else if a != md5 {
+			fileModified = append(fileModified, map[string]any{"path": p, "md5A": a, "md5B": md5})
+		} else {
+			fileUnchanged++
+		}
+	}
+	for p, md5 := range filesA {
+		if _, ok := filesB[p]; !ok {
+			fileRemoved = append(fileRemoved, map[string]any{"path": p, "md5": md5})
+		}
+	}
+
+	// ---- string diff ----
+	addedStrings := []string{}
+	removedStrings := []string{}
+	for s := range strsB {
+		if _, ok := strsA[s]; !ok {
+			addedStrings = append(addedStrings, s)
+		}
+	}
+	for s := range strsA {
+		if _, ok := strsB[s]; !ok {
+			removedStrings = append(removedStrings, s)
+		}
+	}
+
+	// ---- sensitive string diff (keyword list supplied by the client) ----
+	kws := make([]string, 0, len(sensitiveKW))
+	for _, k := range sensitiveKW {
+		if k = strings.ToLower(strings.TrimSpace(k)); k != "" {
+			kws = append(kws, k)
+		}
+	}
+	matchSensitive := func(set map[string]struct{}) map[string]struct{} {
+		out := map[string]struct{}{}
+		for s := range set {
+			low := strings.ToLower(s)
+			for _, k := range kws {
+				if strings.Contains(low, k) {
+					out[s] = struct{}{}
+					break
+				}
+			}
+		}
+		return out
+	}
+	sensA := matchSensitive(strsA)
+	sensB := matchSensitive(strsB)
+	sensitiveAdded := []string{}
+	sensitiveRemoved := []string{}
+	for s := range sensB {
+		if _, ok := sensA[s]; !ok {
+			sensitiveAdded = append(sensitiveAdded, s)
+		}
+	}
+	for s := range sensA {
+		if _, ok := sensB[s]; !ok {
+			sensitiveRemoved = append(sensitiveRemoved, s)
+		}
+	}
+
+	// ---- function diff (same-relpath binaries, matched by name) ----
+	fnCounts := map[string]int{"added": 0, "removed": 0, "modified": 0, "unchanged": 0}
+	fnRows := []map[string]any{}
+	pushRow := func(row map[string]any) {
+		if len(fnRows) < compareFuncRowCap {
+			fnRows = append(fnRows, row)
+		}
+	}
+	for path, binA := range binsA {
+		binB, ok := binsB[path]
+		if !ok {
+			continue
+		}
+		type fnInfo struct {
+			fp    string
+			size  json.RawMessage
+			calls int
+		}
+		fnA := map[string]fnInfo{}
+		for _, f := range binA.Functions {
+			fnA[f.Name] = fnInfo{f.Fingerprint, f.Size, len(f.Calls)}
+		}
+		fnB := map[string]fnInfo{}
+		for _, f := range binB.Functions {
+			fnB[f.Name] = fnInfo{f.Fingerprint, f.Size, len(f.Calls)}
+		}
+		for name, a := range fnA {
+			b, ok := fnB[name]
+			if !ok {
+				fnCounts["removed"]++
+				pushRow(map[string]any{"path": path, "name": name, "status": "removed",
+					"sizeA": a.size, "sizeB": nil, "callsA": a.calls, "callsB": nil})
+			} else if a.fp == "" || b.fp == "" || a.fp != b.fp {
+				fnCounts["modified"]++
+				pushRow(map[string]any{"path": path, "name": name, "status": "modified",
+					"sizeA": a.size, "sizeB": b.size, "callsA": a.calls, "callsB": b.calls})
+			} else {
+				fnCounts["unchanged"]++
+			}
+		}
+		for name, b := range fnB {
+			if _, ok := fnA[name]; !ok {
+				fnCounts["added"]++
+				pushRow(map[string]any{"path": path, "name": name, "status": "added",
+					"sizeA": nil, "sizeB": b.size, "callsA": nil, "callsB": b.calls})
+			}
+		}
+	}
+
+	binACount, _ := r.countRows("binaries", jobA)
+	binBCount, _ := r.countRows("binaries", jobB)
+	scrACount, _ := r.countRows("scripts", jobA)
+	scrBCount, _ := r.countRows("scripts", jobB)
+
+	capStrings := func(s []string) []string {
+		if len(s) > compareStrCap {
+			return s[:compareStrCap]
+		}
+		return s
+	}
+	// Cap the rendered finding lists (the browser can't lay out 50k+ cards),
+	// but keep the true totals for the headline counts. Two very different
+	// firmwares legitimately diff into tens of thousands of findings.
+	addedTotal, removedTotal, commonTotal := len(added), len(removed), len(common)
+	if len(added) > compareFindingCap {
+		added = added[:compareFindingCap]
+	}
+	if len(removed) > compareFindingCap {
+		removed = removed[:compareFindingCap]
+	}
+	if len(common) > compareFindingCap {
+		common = common[:compareFindingCap]
+	}
+
+	return map[string]any{
+		"added": added, "addedTotal": addedTotal,
+		"removed": removed, "removedTotal": removedTotal,
+		"common": common, "commonTotal": commonTotal, "commonCount": commonTotal,
+		"binariesA":   binACount, "binariesB": binBCount,
+		"scriptsA": scrACount, "scriptsB": scrBCount,
+		"filesA": len(filesA), "filesB": len(filesB),
+		"fileDiff": map[string]any{
+			"added": fileAdded, "removed": fileRemoved,
+			"modified": fileModified, "unchangedCount": fileUnchanged,
+		},
+		"functionDiff": map[string]any{
+			"counts": fnCounts, "rows": fnRows,
+			"rowsCapped": len(fnRows) >= compareFuncRowCap,
+		},
+		"stringsAdded": capStrings(addedStrings), "stringsAddedTotal": len(addedStrings),
+		"stringsRemoved": capStrings(removedStrings), "stringsRemovedTotal": len(removedStrings),
+		"sensitiveAdded": sensitiveAdded, "sensitiveRemoved": sensitiveRemoved,
+	}, nil
 }
